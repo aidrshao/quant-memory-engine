@@ -1,0 +1,74 @@
+{
+  "cbr": {
+    "n": 14,
+    "sharpe": 1.1615352613070977,
+    "annual_return": 0.3757485897625028,
+    "max_drawdown": 0.18244429638136772,
+    "win_rate": 0.6428571428571429,
+    "method": "cbr"
+  },
+  "cosine_kline": {
+    "n": 12,
+    "sharpe": -0.5951756943486898,
+    "annual_return": -0.24004526422064765,
+    "max_drawdown": 0.38666583211881633,
+    "win_rate": 0.4166666666666667,
+    "method": "cosine_kline"
+  },
+  "dtw": {
+    "n": 12,
+    "sharpe": 1.71230893948775,
+    "annual_return": 0.5513663801489008,
+    "max_drawdown": 0.14983584901172253,
+    "win_rate": 0.6666666666666666,
+    "method": "dtw"
+  },
+  "ms_garch": {
+    "n": 14,
+    "sharpe": 0.3019307029842638,
+    "annual_return": 0.048265895668769376,
+    "max_drawdown": 0.31665652363020247,
+    "win_rate": 0.5,
+    "method": "ms_garch"
+  },
+  "time2vec_knn": {
+    "n": 12,
+    "sharpe": 1.7018320882625868,
+    "annual_return": 0.5730950834392385,
+    "max_drawdown": 0.14983584901172253,
+    "win_rate": 0.5833333333333334,
+    "method": "time2vec_knn"
+  },
+  "e2e_dl": {
+    "n": 14,
+    "sharpe": 0.20767101499048207,
+    "annual_return": 0.01665553585411428,
+    "max_drawdown": 0.176946040205319,
+    "win_rate": 0.5,
+    "method": "e2e_dl"
+  },
+  "global_best": {
+    "n": 14,
+    "sharpe": -0.37493852837594,
+    "annual_return": -0.21164834262591692,
+    "max_drawdown": 0.4141049898686199,
+    "win_rate": 0.5714285714285714,
+    "method": "global_best"
+  },
+  "equal_weight": {
+    "n": 14,
+    "sharpe": -0.2820214671452241,
+    "annual_return": -0.057326468185388446,
+    "max_drawdown": 0.17579080748886033,
+    "win_rate": 0.5714285714285714,
+    "method": "equal_weight"
+  },
+  "buy_hold": {
+    "n": 14,
+    "sharpe": -0.3533331550029789,
+    "annual_return": -0.2374676189375261,
+    "max_drawdown": 0.4800207684021375,
+    "win_rate": 0.5714285714285714,
+    "method": "buy_hold"
+  }
+}

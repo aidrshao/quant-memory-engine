@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data (large files not versioned)
+data/raw/
+data/processed/
+*.csv
+*.parquet
+*.db
+*.sqlite
+
+# Manuscript / drafts
+paper_draft.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
