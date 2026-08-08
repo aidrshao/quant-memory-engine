@@ -1,33 +1,35 @@
 """
-脚本 01: 构建11维日频市场状态数据库
+Script 01: Build an 11-dimensional daily-frequency market-state database
 
-输入: data/raw/ 下的原始数据（Deribit DVOL / Binance K线 / 资金费率 / metrics）
-输出: data/processed/state_db_{symbol}.csv
+Input: raw data under data/raw/ (Deribit DVOL / Binance K-lines / funding rate / metrics)
+Output: data/processed/state_db_{symbol}.csv
 
-每行一个交易日的11维特征向量，用于后续检索与回测。
+Each row is an 11-dimensional feature vector for one trading day, used for subsequent retrieval and backtesting.
 
-11 维特征设计（对应论文 §2.2 四子空间）:
-  S_vol (波动率子空间, 4维):
-    IVP    - 隐含波动率百分位 (DVOL 的滚动分位数, 观测力学)
-    VRP    - 波动率风险溢价 (DVOL - HV_20d)
-    Slope  - 期限结构代理 (DVOL 相对其 30 日均线的偏离, 反映期限结构抬升/下移)
-    Skew   - 偏斜代理 (20日收益率三阶矩 normalized, 已实现偏度)
-  S_mkt (市场子空间, 4维):
-    R_7d   - 7日收益率
-    R_30d  - 30日收益率
-    RSI    - 相对强弱指标 (14日)
-    HV     - 历史波动率 (20日年化)
-  S_mic (微观结构子空间, 3维):
-    FR     - 资金费率 (binance funding rate, 日均)
-    LS     - 多空比 (binance metrics count_long_short_ratio)
-    ΔOI    - 未平仓量变化率 (OI 日环比)
+11-dimension feature design (corresponding to the four subspaces in paper §2.2):
+  S_vol (volatility subspace, 4-dim):
+    IVP    - implied volatility percentile (rolling quantile of DVOL, observed dynamics)
+    VRP    - volatility risk premium (DVOL - HV_20d)
+    Slope  - term-structure proxy (deviation of DVOL from its 30-day moving average, reflecting term-structure shifts)
+    Skew   - skew proxy (20-day third moment of returns normalized, realized skewness)
+  S_mkt (market subspace, 4-dim):
+    R_7d   - 7-day return
+    R_30d  - 30-day return
+    RSI    - relative strength index (14-day)
+    HV     - historical volatility (20-day annualized)
+  S_mic (microstructure subspace, 3-dim):
+    FR     - funding rate (binance funding rate, daily average)
+    LS     - long/short ratio (binance metrics count_long_short_ratio)
+    ΔOI    - open-interest change rate (day-over-day change of OI)
 
-【注】Slope 与 Skew 因无多到期日/多行权价 IV 数据，采用上述基于可得数据的
-代理计算（详细推导见论文 §2.2 与 data/plan.md）。NetFlow (S_flow) 暂缺，
-由论文 §3.6 的 No-S_flow 消融实验覆盖。
+Note: Since multi-expiry/multi-strike IV data are unavailable, Slope and Skew use the
+proxy calculations above based on available data (detailed derivation in paper §2.2 and
+data/plan.md). NetFlow (S_flow) is currently missing and is covered by the No-S_flow
+ablation experiment in paper §3.6.
 
-归一化: 各特征经分位数(1%/99%) min-max 映射后 clip 至 [-1, +1]，
-仅极端黑天鹅被截断到边界，保留特征区分度，防止破坏马氏距离协方差计算。
+Normalization: each feature is mapped via a quantile (1%/99%) min-max and clipped to [-1, +1];
+only extreme black-swan events are truncated to the boundary, preserving feature discrimination
+and avoiding damage to the Mahalanobis-distance covariance computation.
 """
 import argparse
 import logging
@@ -46,7 +48,7 @@ SYMBOL_MAP = {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}
 
 
 def load_klines(symbol: str) -> pd.DataFrame:
-    """加载 Binance 现货日线 K 线。"""
+    """Load Binance spot daily K-lines."""
     df = pd.read_csv(DATA_RAW / "binance" / f"klines_{symbol}_1d.csv")
     df["date"] = pd.to_datetime(df["date"], utc=True)
     df = df[["date", "close"]].sort_values("date").reset_index(drop=True)
@@ -54,7 +56,7 @@ def load_klines(symbol: str) -> pd.DataFrame:
 
 
 def load_dvol(currency: str) -> pd.DataFrame:
-    """加载 Deribit DVOL。"""
+    """Load Deribit DVOL."""
     df = pd.read_csv(DATA_RAW / "deribit" / f"dvol_{currency.lower()}.csv")
     df["date"] = pd.to_datetime(df["date"], utc=True)
     df = df[["date", "dvol"]].sort_values("date").reset_index(drop=True)
@@ -62,7 +64,7 @@ def load_dvol(currency: str) -> pd.DataFrame:
 
 
 def load_funding(symbol: str) -> pd.DataFrame:
-    """加载 Binance 资金费率（8h, 聚合为日均）。"""
+    """Load Binance funding rate (8h, aggregated to daily average)."""
     df = pd.read_csv(DATA_RAW / "binance" / f"funding_rate_{symbol}.csv")
     df["date"] = pd.to_datetime(df["date"], utc=True)
     daily = df.groupby("date")["fundingRate"].mean().reset_index()
@@ -70,14 +72,14 @@ def load_funding(symbol: str) -> pd.DataFrame:
 
 
 def load_metrics(symbol: str) -> pd.DataFrame:
-    """加载 Binance metrics（OI 与多空比）。"""
+    """Load Binance metrics (OI and long/short ratio)."""
     df = pd.read_csv(DATA_RAW / "binance" / f"metrics_{symbol}.csv")
     df["date"] = pd.to_datetime(df["date"], utc=True)
     return df.sort_values("date").reset_index(drop=True)
 
 
 def compute_rsi(close: pd.Series, window: int = 14) -> pd.Series:
-    """计算 RSI。"""
+    """Compute the RSI."""
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(window).mean()
     loss = (-delta.clip(upper=0)).rolling(window).mean()
@@ -87,17 +89,17 @@ def compute_rsi(close: pd.Series, window: int = 14) -> pd.Series:
 
 
 def build_state_db(currency: str) -> pd.DataFrame:
-    """构建指定标的的10维日频状态数据库。"""
+    """Build the daily-frequency state database for the given asset."""
     symbol = SYMBOL_MAP[currency]
-    logger.info(f"开始构建 {currency} 10维状态数据库...")
+    logger.info(f"Building the {currency} state database...")
 
-    # 加载原始数据
+    # Load raw data
     klines = load_klines(symbol)
     dvol = load_dvol(currency)
     funding = load_funding(symbol)
     metrics = load_metrics(symbol)
 
-    # ---- 基于 K 线计算市场子空间特征 ----
+    # ---- Compute market-subspace features from K-lines ----
     close = klines.set_index("date")["close"]
     ret = close.pct_change()
 
@@ -105,46 +107,46 @@ def build_state_db(currency: str) -> pd.DataFrame:
     k_features["r_7d"] = (close / close.shift(7)) - 1
     k_features["r_30d"] = (close / close.shift(30)) - 1
     k_features["rsi"] = compute_rsi(close)
-    k_features["hv"] = ret.rolling(20).std() * np.sqrt(365)  # 20日年化历史波动率
-    # Skew 代理: 20日收益率三阶矩 (已实现偏度), 标准化
+    k_features["hv"] = ret.rolling(20).std() * np.sqrt(365)  # 20-day annualized historical volatility
+    # Skew proxy: 20-day third moment of returns (realized skewness), standardized
     k_features["skew_proxy"] = ret.rolling(20).skew()
     k_features.reset_index(inplace=True)
 
-    # ---- 基于 DVOL 计算波动率子空间特征 ----
+    # ---- Compute volatility-subspace features from DVOL ----
     dvol_df = dvol.set_index("date")["dvol"].sort_index()
     v_features = pd.DataFrame(index=dvol_df.index)
     v_features["dvol"] = dvol_df
-    # IVP: DVOL 的滚动 1 年分位数 (0~1)
+    # IVP: rolling 1-year quantile of DVOL (0~1)
     v_features["ivp"] = dvol_df.rolling(365, min_periods=60).rank(pct=True)
-    # HV 与 DVOL 对齐
+    # Align HV with DVOL
     hv_series = k_features.set_index("date")["hv"]
     v_features["dvol"] = dvol_df
     v_features["hv"] = hv_series.reindex(dvol_df.index)
-    # VRP: DVOL - HV_20d (波动率风险溢价)
+    # VRP: DVOL - HV_20d (volatility risk premium)
     v_features["vrp"] = v_features["dvol"] - v_features["hv"]
-    # Slope 代理: DVOL 相对 30 日均线的偏离 (期限结构抬升/下移)
+    # Slope proxy: deviation of DVOL from its 30-day moving average (term-structure shifts)
     v_features["slope"] = v_features["dvol"] - v_features["dvol"].rolling(30).mean()
     v_features.reset_index(inplace=True)
 
-    # ---- 基于资金费率计算微观结构特征 ----
+    # ---- Compute microstructure features from the funding rate ----
     fr_features = funding.set_index("date")["fr"].sort_index().reset_index()
 
-    # ---- 基于 metrics 计算 ΔOI ----
+    # ---- Compute ΔOI from metrics ----
     oi_features = metrics[["date", "open_interest", "long_short_ratio"]].copy()
-    oi_features["d_oi"] = oi_features["open_interest"].pct_change()  # ΔOI 日环比
+    oi_features["d_oi"] = oi_features["open_interest"].pct_change()  # ΔOI day-over-day change
 
-    # ---- 对齐所有特征到同一日期轴 ----
-    # k_features 中不再保留 hv（由 v_features 统一提供，避免 merge 列名冲突）
+    # ---- Align all features to a common date axis ----
+    # hv is no longer kept in k_features (provided uniformly by v_features to avoid merge column-name conflicts)
     k_feat_out = k_features.copy()
     k_feat_out = k_feat_out.drop(columns=["hv"], errors="ignore")
     state = v_features.merge(k_feat_out, on="date", how="outer")
     state = state.merge(fr_features, on="date", how="outer")
     state = state.merge(oi_features[["date", "d_oi", "long_short_ratio"]], on="date", how="outer")
 
-    # ---- 裁剪到 DVOL 覆盖窗口 (2023-10-05 ~ 2026-06-30) ----
+    # ---- Trim to the DVOL coverage window (2023-10-05 ~ 2026-06-30) ----
     state = state[state["dvol"].notna()].sort_values("date").reset_index(drop=True)
 
-    # ---- 构造 11 维特征矩阵 ----
+    # ---- Build the 11-dimension feature matrix ----
     features = pd.DataFrame({
         "date": state["date"],
         # S_vol
@@ -163,22 +165,22 @@ def build_state_db(currency: str) -> pd.DataFrame:
         "d_oi": state["d_oi"],
     })
 
-    # ---- 缺失值处理: 前值填充 ----
+    # ---- Missing-value handling: forward fill ----
     feature_cols = ["ivp", "vrp", "slope", "skew", "r_7d", "r_30d", "rsi", "hv", "fr", "ls", "d_oi"]
     features = features.ffill()
 
-    # ---- 丢弃窗口开头的滚动预热期（覆盖 ivp 60天最长预热）----
-    # 预热期特征为 NaN（rolling 窗口不足），ffill 无法回填开头，直接丢弃
+    # ---- Drop the rolling warm-up period at the start of the window (covers the longest 60-day warm-up of ivp) ----
+    # Warm-up features are NaN (insufficient rolling window), ffill cannot backfill the head, so drop them
     features = features[features[feature_cols].notna().all(axis=1)].reset_index(drop=True)
 
-    # ---- 异常值过滤: 单日收益跳变 >50% 用前值替换 ----
+    # ---- Outlier filtering: single-day return jumps >50% are replaced with the previous value ----
     for col in ["r_7d", "r_30d"]:
         mask = features[col].abs() > 0.5
         features.loc[mask, col] = features[col].shift(1)
 
-    # ---- 归一化: 分位数 min-max 映射至 [-1, 1] ----
-    # 用 1%/99% 分位数做 min-max，保留中间 98% 数据的区分度，
-    # 仅极端黑天鹅被 clip 到边界，避免 z-score+clip 导致的过度平坦化。
+    # ---- Normalization: quantile min-max mapping to [-1, 1] ----
+    # Use the 1%/99% quantiles for min-max, preserving the discrimination of the middle 98% of data;
+    # only extreme black-swan events are clipped to the boundary, avoiding the over-flattening caused by z-score+clip.
     for col in feature_cols:
         lo, hi = features[col].quantile(0.01), features[col].quantile(0.99)
         if hi - lo < 1e-12:
@@ -187,13 +189,13 @@ def build_state_db(currency: str) -> pd.DataFrame:
             features[col] = (features[col] - lo) / (hi - lo) * 2.0 - 1.0
             features[col] = features[col].clip(-1.0, 1.0)
 
-    logger.info(f"[{currency}] 状态库: {len(features)} 行 ({features.date.min().date()} ~ {features.date.max().date()})")
-    logger.info(f"[{currency}] NaN 总数: {features[feature_cols].isna().sum().sum()}")
+    logger.info(f"[{currency}] state database: {len(features)} rows ({features.date.min().date()} ~ {features.date.max().date()})")
+    logger.info(f"[{currency}] total NaN: {features[feature_cols].isna().sum().sum()}")
     return features
 
 
 def main():
-    parser = argparse.ArgumentParser(description="构建10维日频状态数据库")
+    parser = argparse.ArgumentParser(description="Build the daily-frequency state database")
     parser.add_argument("--symbol", choices=["BTC", "ETH"], required=True)
     args = parser.parse_args()
 
@@ -201,7 +203,7 @@ def main():
     output_path = DATA_PROCESSED / f"state_db_{args.symbol.lower()}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     state.to_csv(output_path, index=False)
-    logger.info(f"已保存: {output_path}")
+    logger.info(f"Saved: {output_path}")
 
 
 if __name__ == "__main__":

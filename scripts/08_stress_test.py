@@ -1,20 +1,20 @@
 """
-脚本 08: 摩擦成本压力测试（Stress Test）
+Script 08: Friction-cost stress test (Stress Test)
 
-目的：
-  回应审稿人对"BS 合成期权定价 + 单一买卖价差假设"的质疑。
-  在更高买卖价差 δ_spread = 0.5% / 1.0% 下，重跑完整 CBR 检索-排行-实现
-  与全部基线，验证：即使在极端流动性干涸下，CBR 对静态基线
-  （Global-Best / Equal-Weight / Buy-Hold）的 Alpha 依然稳健成立。
+Purpose:
+  Respond to the reviewers' concern about the "BS synthetic option pricing + single bid-ask spread" assumption.
+  Re-run the full CBR retrieve-rank-realize pipeline and all baselines under higher bid-ask spreads
+  δ_spread = 0.5% / 1.0%, verifying that even under extreme liquidity drought, CBR's Alpha over the
+  static baselines (Global-Best / Equal-Weight / Buy-Hold) still holds robustly.
 
-实现：
-  - 复用 02 回放引擎与 03 滚动窗口基线 runner；
-  - 通过 functools.partial 将 qme.replay_strategy 的默认 spread 动态替换
-    （02 内部 replay_and_rank / 03 的 realize_return 均按调用时全局解析，
-    因此替换后所有策略选择与实现收益均按新价差重算）；
-  - 只写独立的 stress_test.json，绝不覆盖 data/results/sota_*.json。
+Implementation:
+  - Reuse the 02 replay engine and the 03 rolling-window baseline runners;
+  - Use functools.partial to dynamically replace the default spread of qme.replay_strategy
+    (02's internal replay_and_rank / 03's realize_return both resolve globally at call time,
+    so after the replacement all strategy selection and realized returns are recomputed with the new spread);
+  - Only write an independent stress_test.json, never overwriting data/results/sota_*.json.
 
-用法:
+Usage:
   python3 scripts/08_stress_test.py
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# ---- 加载 02 引擎与 03 实验（数字开头文件名，需 importlib）----
+# ---- Load the 02 engine and the 03 experiments (digit-prefixed filenames, need importlib) ----
 def _load(name: str, file: str):
     spec = importlib.util.spec_from_file_location(name, str(Path(__file__).parent / file))
     mod = importlib.util.module_from_spec(spec)
@@ -40,19 +40,19 @@ def _load(name: str, file: str):
     return mod
 
 walk = _load("walk", "03_run_walk_forward.py")
-# 03 内部以 importlib 自建了独立的 qme 模块（walk.qme），
-# 必须补丁 walk.qme 而非另外加载的实例，否则不生效。
+# 03 builds its own independent qme module via importlib (walk.qme);
+# we must patch walk.qme rather than a separately loaded instance, otherwise it has no effect.
 qme = walk.qme
 
 ORIG_REPLAY = qme.replay_strategy
 
-# 压力测试价差水平：0.5% 与 1.0%（基准为 0.2%）
+# Stress-test spread levels: 0.5% and 1.0% (the baseline is 0.2%)
 STRESS_SPREADS = [0.005, 0.010]
 SYMBOLS = ["BTC", "ETH"]
 
 
 def run_symbol_eval(currency: str, spread: float) -> dict:
-    """在给定价差下重算某标的全部方法（CBR + 基线）的聚合指标，不落盘。"""
+    """Recompute the aggregate metrics of all methods (CBR + baselines) for an asset under a given spread, without persisting."""
     qme.replay_strategy = functools.partial(ORIG_REPLAY, spread=spread)
     state, market, date_to_idx = walk.load_data(currency)
     oos_idx = walk.oos_state_indices(len(state))
@@ -64,7 +64,7 @@ def run_symbol_eval(currency: str, spread: float) -> dict:
         summary[method] = metrics
         logger.info(f"  [{currency}][spread={spread*100:.1f}%][{method}] "
                     f"n={metrics['n']} Sharpe={metrics['sharpe']:.3f} "
-                    f"年化={metrics['annual_return']*100:.1f}%")
+                    f"annual={metrics['annual_return']*100:.1f}%")
     return summary
 
 
@@ -78,10 +78,10 @@ def main():
 
     out = ROOT / "data" / "results" / "stress_test.json"
     out.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info(f"已保存: {out}")
+    logger.info(f"Saved: {out}")
 
-    # 打印精简对比：CBR vs 静态基线（每次做空/买方压力观察）
-    print("\n========== 压力测试摘要（Sharpe） ==========")
+    # Print a compact comparison: CBR vs static baselines (per stress observation)
+    print("\n========== Stress-test summary (Sharpe) ==========")
     for spread in STRESS_SPREADS:
         for sym in SYMBOLS:
             d = results["stress"][f"{spread:.3f}"][sym]

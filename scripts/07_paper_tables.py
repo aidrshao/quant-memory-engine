@@ -1,16 +1,16 @@
 """
-脚本 07: 消融实验 + 统计显著性检验 + 补齐剩余基线 + 回填论文
+Script 07: Ablation study + statistical significance tests + complete remaining baselines + fill into the paper
 
-功能:
-  1. 消融实验 (BTC): Full Model / No-S_mic / No-S_vol / No-Revise / No-Retain
-  2. 统计显著性: Diebold-Mariano (Newey-West HAC) + Hansen SPA (bootstrap)
-  3. 补齐基线: Time2Vec+k-NN (Time2Vec 嵌入 + k-NN 检索) 与 E2E-DL (小型 MLP)
-  4. 回填 paper_draft.tex 的 Table 4/5 (含 T2V/E2E 行)、Table 6 (消融)、Table 7 (显著性)
-  5. 重新编译 PDF
+Features:
+  1. Ablation study (BTC): Full Model / No-S_mic / No-S_vol / No-Revise / No-Retain
+  2. Statistical significance: Diebold-Mariano (Newey-West HAC) + Hansen SPA (bootstrap)
+  3. Complete baselines: Time2Vec+k-NN (Time2Vec embedding + k-NN retrieval) and E2E-DL (small MLP)
+  4. Fill Table 4/5 (including T2V/E2E rows), Table 6 (ablation), and Table 7 (significance) of paper_draft.tex
+  5. Recompile the PDF
 
-用法:
-  python3 scripts/07_paper_tables.py          # 全部计算 + 回填 + 编译
-  python3 scripts/07_paper_tables.py --fill   # 仅基于已有 json 回填 + 编译
+Usage:
+  python3 scripts/07_paper_tables.py          # all computation + fill + compile
+  python3 scripts/07_paper_tables.py --fill   # fill + compile based on existing json only
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-# ---- 复用 02/03 引擎 ----
+# ---- Reuse the 02/03 engines ----
 _THIS = Path(__file__).resolve()
 _SCRIPTS = _THIS.parent
 _QME = importlib.util.spec_from_file_location("qme", _SCRIPTS / "02_retrieve_and_replay.py")
@@ -52,9 +52,9 @@ HOLDING = wf.HOLDING
 FEATURE_COLS = qme.FEATURE_COLS
 CANDIDATES = qme.CANDIDATE_STRATEGIES
 
-# ---- 方法与论文表格标签 ----
+# ---- Methods and paper-table labels ----
 METHOD_LABELS = {
-    "cbr": "\\textbf{本文方法}",
+    "cbr": "\\textbf{Our method}",
     "cosine_kline": "Cosine-KLine",
     "dtw": "DTW",
     "ms_garch": "MS-GARCH",
@@ -68,7 +68,7 @@ SOTA_METHODS = list(METHOD_LABELS.keys())
 
 
 # ============================================================
-# 数据与评估
+# Data and evaluation
 # ============================================================
 def load_data(currency):
     return wf.load_data(currency)
@@ -79,7 +79,7 @@ def oos_indices(state_len):
 
 
 def returns_by_date(records, market, date_to_idx) -> dict:
-    """{date: realized_return}，仅保留有限值。"""
+    """{date: realized_return}, keeping only finite values."""
     out = {}
     for date, spec in records:
         m_idx = date_to_idx.get(date)
@@ -92,7 +92,7 @@ def returns_by_date(records, market, date_to_idx) -> dict:
 
 
 def metrics_from_returns(rets: np.ndarray) -> dict:
-    """由非重叠持有期收益计算论文指标。"""
+    """Compute paper metrics from non-overlapping holding-period returns."""
     rets = np.clip(np.asarray(rets, float), -1.0, 1.0)
     if len(rets) == 0:
         return {"n": 0, "sharpe": 0.0, "annual_return": 0.0, "max_drawdown": 0.0, "win_rate": 0.0}
@@ -110,14 +110,14 @@ def metrics_from_returns(rets: np.ndarray) -> dict:
 
 
 # ============================================================
-# CBR 引擎（可配置消融）
+# CBR engine (configurable ablation)
 # ============================================================
 def run_cbr_cfg(state, market, date_to_idx, oos_idx, feature_cols=FEATURE_COLS,
                 revise=True, retain=True) -> list[tuple]:
-    """CBR 滚动样本外，支持消融开关。
+    """CBR rolling out-of-sample, supporting ablation switches.
 
-    revise=False: 行权价映射使用固定参考价（预热期标的中位数），不做逐日适配。
-    retain=False: 案例库冻结为初始预热窗口（不随历史增长），即不留存新案例。
+    revise=False: strike mapping uses a fixed reference price (median underlying over the warm-up), no daily adaptation.
+    retain=False: the case library is frozen to the initial warm-up window (does not grow with history), i.e., no new cases are retained.
     """
     if not revise:
         s_ref = float(np.median(market["spot"].iloc[:WARMUP]))
@@ -125,7 +125,7 @@ def run_cbr_cfg(state, market, date_to_idx, oos_idx, feature_cols=FEATURE_COLS,
     for t in oos_idx:
         v_now = state.iloc[t][feature_cols].to_numpy(float)
         hist_lo = 0 if retain else 0
-        hist_hi = t if retain else WARMUP  # no_retain: 仅用初始库
+        hist_hi = t if retain else WARMUP  # no_retain: use only the initial library
         hist = state.iloc[hist_lo:hist_hi]
         if len(hist) < 2:
             continue
@@ -136,7 +136,7 @@ def run_cbr_cfg(state, market, date_to_idx, oos_idx, feature_cols=FEATURE_COLS,
         if match.empty:
             match = qme.retrieve(v_now, hist, state.iloc[t]["date"], feature_cols=feature_cols,
                                  threshold=0.0)
-        # 稳定的 Top-K 检索（与主实验一致）
+        # Stable Top-K retrieval (consistent with the main experiment)
         match = match.sort_values("combined", ascending=False).head(wf.TOP_K)
         if match.empty:
             continue
@@ -169,7 +169,7 @@ def _board(match, market, date_to_idx, revise=True, s_ref=None):
 
 
 def _fixed_legs(strategy, s_ref):
-    """固定参考价下的策略腿（No-Revise）。"""
+    """Strategy legs under a fixed reference price (No-Revise)."""
     if strategy == "long_straddle":
         return [qme.Leg(qme.CALL, qme.BUY, s_ref), qme.Leg(qme.PUT, qme.BUY, s_ref)]
     if strategy == "short_straddle":
@@ -182,13 +182,13 @@ def _fixed_legs(strategy, s_ref):
 
 
 # ============================================================
-# 基线: Time2Vec+k-NN 与 E2E-DL
+# Baselines: Time2Vec+k-NN and E2E-DL
 # ============================================================
-_FREQS = [2.0, 4.0, 8.0, 16.0, 32.0]  # Time2Vec 周期
+_FREQS = [2.0, 4.0, 8.0, 16.0, 32.0]  # Time2Vec periods
 
 
 def _t2v_embed(seg: np.ndarray) -> np.ndarray:
-    """对 29 个对数收益窗口做 Time2Vec 风格嵌入（线性时间 + 多频正弦）。"""
+    """Apply a Time2Vec-style embedding (linear time + multi-frequency sine) to a 29-length log-return window."""
     n = len(seg)
     t = np.arange(n, dtype=float)
     feats = [seg]
@@ -199,7 +199,7 @@ def _t2v_embed(seg: np.ndarray) -> np.ndarray:
 
 
 def run_time2vec(state, market, date_to_idx, oos_idx, top_k=wf.TOP_K) -> list[tuple]:
-    """Time2Vec 嵌入 + 余弦 k-NN 检索，回放选策略。"""
+    """Time2Vec embedding + cosine k-NN retrieval, then replay to select a strategy."""
     spot = market["spot"].to_numpy(float)
     win = 30
     hist_start = date_to_idx[state.iloc[WARMUP]["date"]]
@@ -232,7 +232,7 @@ def run_time2vec(state, market, date_to_idx, oos_idx, top_k=wf.TOP_K) -> list[tu
 
 
 def _mlp_predict(Xtr, ytr, Xte, hidden=16, epochs=200, lr=0.005, seed=0) -> int:
-    """小型 1 隐层 MLP (tanh+softmax, 梯度下降 + 权重裁剪)，返回类别 argmax。"""
+    """Small 1-hidden-layer MLP (tanh+softmax, gradient descent + weight clipping), returning the class argmax."""
     rng = np.random.default_rng(seed)
     Xtr = np.asarray(Xtr, float)
     n = len(Xtr)
@@ -268,10 +268,10 @@ def _mlp_predict(Xtr, ytr, Xte, hidden=16, epochs=200, lr=0.005, seed=0) -> int:
 
 
 def run_e2e_dl(state, market, date_to_idx, oos_idx) -> list[tuple]:
-    """端到端深度学习基线: 小型 MLP 学习 状态 -> 最优策略 映射，逐锚点重训。"""
+    """End-to-end deep learning baseline: a small MLP learns the state -> best strategy mapping, retrained at each anchor."""
     spot = market["spot"].to_numpy(float)
     records = []
-    # 预计算每个历史状态下各策略的前向30日收益（供训练标签）
+    # Precompute the forward 30-day return of each strategy for every historical state (as training labels)
     n_state = len(state)
     strat_rets = np.full((n_state, len(CANDIDATES)), np.nan)
     for i in range(n_state):
@@ -298,10 +298,10 @@ def run_e2e_dl(state, market, date_to_idx, oos_idx) -> list[tuple]:
 
 
 # ============================================================
-# 统计显著性检验
+# Statistical significance tests
 # ============================================================
 def _nw_hac_var(d: np.ndarray, lag: int = 3) -> float:
-    """Newey-West HAC 方差估计。"""
+    """Newey-West HAC variance estimator."""
     T = len(d)
     d = d - d.mean()
     g0 = np.mean(d * d)
@@ -311,26 +311,26 @@ def _nw_hac_var(d: np.ndarray, lag: int = 3) -> float:
 
 
 def dm_test_pvalue(ret_cbr: dict, ret_base: dict) -> float:
-    """Diebold-Mariano 检验 p 值（H1: CBR 优于基线）。"""
+    """Diebold-Mariano test p-value (H1: CBR is better than the baseline)."""
     dates = sorted(set(ret_cbr) & set(ret_base))
     if len(dates) < 3:
         return np.nan
-    d = np.array([ret_cbr[dt] - ret_base[dt] for dt in dates])  # >0 表示 CBR 更好
+    d = np.array([ret_cbr[dt] - ret_base[dt] for dt in dates])  # >0 means CBR is better
     T = len(d)
     var = _nw_hac_var(d)
     if var <= 0:
         return 1.0 if d.mean() <= 0 else 0.0
-    stat = d.mean() / np.sqrt(var)  # 单边: 大正值 => CBR 更好
+    stat = d.mean() / np.sqrt(var)  # one-sided: large positive => CBR better
     return float(1.0 - stats.norm.cdf(stat))
 
 
 def hansen_spa_pvalue(ret_cbr: dict, base_rets: dict, n_boot: int = 2000, seed: int = 0) -> float:
-    """Hansen SPA 检验 p 值（原假设: 无基线优于 CBR）。"""
+    """Hansen SPA test p-value (null: no baseline beats CBR)."""
     common = sorted(set(ret_cbr).intersection(*[set(b) for b in base_rets.values()]))
     if len(common) < 3:
         return np.nan
     T = len(common)
-    # d[b,t] = 基线b - CBR (正表示基线更好)
+    # d[b,t] = baseline b - CBR (positive means the baseline is better)
     keys = list(base_rets.keys())
     D = np.zeros((len(keys), T))
     for b, base in enumerate(keys):
@@ -346,14 +346,14 @@ def hansen_spa_pvalue(ret_cbr: dict, base_rets: dict, n_boot: int = 2000, seed: 
         Db = D[:, idx]
         mub = Db.mean(1)
         sdb = Db.std(1, ddof=1) + 1e-12
-        tib = np.sqrt(T) * (mub - mu) / sdb  # 原假设下 recentering
+        tib = np.sqrt(T) * (mub - mu) / sdb  # recentering under the null
         if tib.max() >= obs:
             cnt += 1
     return float(cnt / n_boot)
 
 
 # ============================================================
-# 主计算
+# Main computation
 # ============================================================
 def run_all(currency) -> dict:
     logger.info(f"========== {currency} ==========")
@@ -375,14 +375,14 @@ def run_all(currency) -> dict:
         met["method"] = m
         summary[m] = met
         logger.info(f"  [{m}] n={met['n']} Sharpe={met['sharpe']:.3f} "
-                    f"年化={met['annual_return']*100:.1f}% 回撤={met['max_drawdown']*100:.1f}% "
-                    f"胜率={met['win_rate']*100:.1f}%")
+                    f"annual={met['annual_return']*100:.1f}% drawdown={met['max_drawdown']*100:.1f}% "
+                    f"win_rate={met['win_rate']*100:.1f}%")
 
     return {"summary": summary, "rets_by_method": rets_by_method}
 
 
 def run_ablation(currency="BTC") -> dict:
-    logger.info(f"========== {currency} 消融实验 ==========")
+    logger.info(f"========== {currency} ablation study ==========")
     state, market, date_to_idx = load_data(currency)
     oos_idx = oos_indices(len(state))
     no_mic = [c for c in FEATURE_COLS if c not in ("fr", "ls", "d_oi")]
@@ -400,12 +400,12 @@ def run_ablation(currency="BTC") -> dict:
         rd = returns_by_date(rec, market, date_to_idx)
         out[name] = metrics_from_returns(np.array(list(rd.values())))
         logger.info(f"  [{name}] Sharpe={out[name]['sharpe']:.3f} "
-                    f"年化={out[name]['annual_return']*100:.1f}% 回撤={out[name]['max_drawdown']*100:.1f}%")
+                    f"annual={out[name]['annual_return']*100:.1f}% drawdown={out[name]['max_drawdown']*100:.1f}%")
     return out
 
 
 def run_significance(sym_data: dict) -> dict:
-    """sym_data: {sym: {'rets_by_method': {...}}}。"""
+    """sym_data: {sym: {'rets_by_method': {...}}}."""
     out = {}
     for sym, d in sym_data.items():
         rets = d["rets_by_method"]
@@ -420,7 +420,7 @@ def run_significance(sym_data: dict) -> dict:
             if p < 0.05:
                 non_sig_baselines.append(m)
         out[sym] = row
-    # Hansen SPA: 联合检验（使用 BTC）
+    # Hansen SPA: joint test (using BTC)
     btc = sym_data["BTC"]["rets_by_method"]
     spa_p = hansen_spa_pvalue(btc["cbr"], {m: btc[m] for m in btc if m != "cbr"})
     out["_spa_p"] = spa_p
@@ -429,7 +429,7 @@ def run_significance(sym_data: dict) -> dict:
 
 
 # ============================================================
-# 回填论文
+# Fill into the paper
 # ============================================================
 def _fmt_metrics(m: dict) -> list[str]:
     return [
@@ -447,10 +447,10 @@ def _table_block(tex: str, label: str) -> tuple[int, int]:
 
 
 def _replace_cells(block: str, label: str, values: list[str], has_interp: bool) -> str:
-    """在块内替换 label 行的数据单元格。
+    """Replace the data cells of the label row within the block.
 
-    has_interp=True: 行格式 `<label> & c1..c4 & <interp> \\`，替换 4 个数值保留末列。
-    has_interp=False: 行格式 `<label> & v1..vk \\`，按序替换占位符。
+    has_interp=True: row format `<label> & c1..c4 & <interp> \\`, replace the 4 numeric cells and keep the last column.
+    has_interp=False: row format `<label> & v1..vk \\`, replace the placeholders in order.
     """
     if has_interp:
         pat = re.compile(r"^(" + re.escape(label) + r"\s*&)(.*?)(\s*&\s*[^&]*?\s*\\\\$)", re.M)
@@ -462,7 +462,7 @@ def _replace_cells(block: str, label: str, values: list[str], has_interp: bool) 
     m = pat.search(block)
     if not m:
         return None
-    # 整体替换数据单元格（兼容占位符与已回填数字）
+    # Replace the data cells as a whole (compatible with placeholders and already-filled numbers)
     return m.group(1) + " " + " & ".join(values) + "\\\\"
 
 
@@ -480,25 +480,25 @@ def fill_tables(sota_summary, ablation, significance) -> None:
             new_row = _replace_cells(block, lbl, _fmt_metrics(sota_summary[sym]["summary"][m]),
                                      has_interp=True)
             if new_row is None:
-                logger.warning(f"[{sym}] 未找到 SOTA 行: {lbl}")
+                logger.warning(f"[{sym}] SOTA row not found: {lbl}")
                 continue
             block = re.sub(r"^" + re.escape(lbl) + r".*?\\\\$",
                            lambda _m: new_row, block, count=1, flags=re.M)
         replacements.append((s, e, block))
 
-    # ---- Table 6 (消融, BTC) ----
+    # ---- Table 6 (ablation, BTC) ----
     s, e = _table_block(tex, "tab:ablation_btc")
     block = tex[s:e]
     for name, met in ablation.items():
         new_row = _replace_cells(block, name, _fmt_metrics(met), has_interp=False)
         if new_row is None:
-            logger.warning(f"未找到消融行: {name}")
+            logger.warning(f"Ablation row not found: {name}")
             continue
         block = re.sub(r"^" + re.escape(name) + r".*?\\\\$",
                        lambda _m: new_row, block, count=1, flags=re.M)
     replacements.append((s, e, block))
 
-    # ---- Table 7 (显著性) ----
+    # ---- Table 7 (significance) ----
     s, e = _table_block(tex, "tab:significance")
     block = tex[s:e]
     spa_p = significance["_spa_p"]
@@ -506,27 +506,27 @@ def fill_tables(sota_summary, ablation, significance) -> None:
                    ("time2vec_knn", "Time2Vec+k-NN"), ("e2e_dl", "E2E-DL"), ("global_best", "Global-Best")]:
         p_btc = significance["BTC"].get(m, np.nan)
         p_eth = significance["ETH"].get(m, np.nan)
-        # 结论基于两标的 DM p 值
+        # The conclusion is based on the DM p-values of both assets
         if (np.isfinite(p_btc) and p_btc < 0.05) or (np.isfinite(p_eth) and p_eth < 0.05):
-            concl = "显著优于"
+            concl = "significantly better"
         elif (np.isfinite(p_btc) and p_btc < 0.10) or (np.isfinite(p_eth) and p_eth < 0.10):
-            concl = "边际显著"
+            concl = "marginally significant"
         else:
-            concl = "无显著差异"
+            concl = "no significant difference"
         vals = [_fmt_p(p_btc), _fmt_p(p_eth), concl]
         new_row = _replace_cells(block, lbl, vals, has_interp=False)
         if new_row is None:
-            logger.warning(f"未找到显著性行: {lbl}")
+            logger.warning(f"Significance row not found: {lbl}")
             continue
         block = re.sub(r"^" + re.escape(lbl) + r".*?\\\\$",
                        lambda _m: new_row, block, count=1, flags=re.M)
     replacements.append((s, e, block))
 
-    # 从后往前应用替换
+    # Apply the replacements from last to first
     for s, e, nb in sorted(replacements, key=lambda x: -x[0]):
         tex = tex[:s] + nb + tex[e:]
     PAPER_TEX.write_text(tex, encoding="utf-8")
-    logger.info("已回填 Table 4/5/6/7。")
+    logger.info("Filled Table 4/5/6/7.")
 
 
 def _fmt_p(p: float) -> str:
@@ -544,10 +544,10 @@ def compile_pdf() -> None:
     r = subprocess.run(["xelatex", "-interaction=nonstopmode", "paper_draft.tex"],
                        cwd=cwd, capture_output=True, text=True)
     pdf = ROOT / "paper_draft.pdf"
-    logger.info(f"PDF 编译完成: {pdf}" if pdf.exists() else "PDF 编译失败，请检查日志")
+    logger.info(f"PDF compiled: {pdf}" if pdf.exists() else "PDF compilation failed, please check the log")
     m = re.search(r"Output written on [^\n]+\((\d+) pages", r.stdout)
     if m:
-        logger.info(f"PDF 页数: {m.group(1)}")
+        logger.info(f"PDF pages: {m.group(1)}")
 
 
 def persist(sota_summary, ablation, significance) -> None:
@@ -559,12 +559,12 @@ def persist(sota_summary, ablation, significance) -> None:
         json.dump(ablation, f, indent=2, ensure_ascii=False)
     with open(DATA_RESULTS / "significance.json", "w") as f:
         json.dump(significance, f, indent=2, ensure_ascii=False, default=str)
-    logger.info("已持久化 sota_*.json / ablation_btc.json / significance.json")
+    logger.info("Persisted sota_*.json / ablation_btc.json / significance.json")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="消融 + 显著性 + 补齐基线 + 回填")
-    parser.add_argument("--fill", action="store_true", help="仅基于已有 json 回填并编译")
+    parser = argparse.ArgumentParser(description="Ablation + significance + complete baselines + fill into the paper")
+    parser.add_argument("--fill", action="store_true", help="fill and compile based on existing json only")
     args = parser.parse_args()
 
     if args.fill:

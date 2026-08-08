@@ -1,14 +1,14 @@
 """
-脚本 05: 消融实验
+Script 05: Ablation study
 
-通过移除系统的各个组件，验证每个模块的增量贡献:
-    Ablation A: 移除微观结构子空间 (S_mic) — 9维向量
-    Ablation B: 移除链上资金流子空间 (S_flow) — 11维向量
-    Ablation C: 移除修正模块 (Revise) — 使用固定参数
-    Ablation D: 移除留存模块 (Retain) — 案例库不更新
-    Full Model: 完整12维 + 4R循环
+Verify the incremental contribution of each module by removing components of the system:
+    Ablation A: remove the microstructure subspace (S_mic) — 9-dim vector
+    Ablation B: remove the on-chain flow subspace (S_flow) — 11-dim vector
+    Ablation C: remove the revise module (Revise) — use fixed parameters
+    Ablation D: remove the retain module (Retain) — the case library is not updated
+    Full Model: full 12-dim + 4R cycle
 
-输出: data/results/ablation_{symbol}.csv
+Output: data/results/ablation_{symbol}.csv
 """
 import argparse
 import logging
@@ -23,31 +23,31 @@ DATA_RESULTS = Path(__file__).parent.parent / "data" / "results"
 
 ABLATIONS = {
     "full":        {"dims": 11, "revise": True,  "retain": True},
-    "no_S_mic":    {"dims": 8,  "revise": True,  "retain": True},   # 移除 FR, LS, ΔOI
-    "no_S_vol":    {"dims": 7,  "revise": True,  "retain": True},   # 移除 IVP, VRP, Slope, Skew
+    "no_S_mic":    {"dims": 8,  "revise": True,  "retain": True},   # remove FR, LS, ΔOI
+    "no_S_vol":    {"dims": 7,  "revise": True,  "retain": True},   # remove IVP, VRP, Slope, Skew
     "no_revise":   {"dims": 11, "revise": False, "retain": True},
     "no_retain":   {"dims": 11, "revise": True,  "retain": False},
 }
 
 
 def run_ablation(symbol: str, ablation_name: str, config: dict) -> dict:
-    """运行单个消融配置。"""
-    logger.info(f"[{symbol}] 消融实验: {ablation_name} (config={config})")
+    """Run a single ablation configuration."""
+    logger.info(f"[{symbol}] ablation: {ablation_name} (config={config})")
 
-    # TODO: 调用 walk_forward_backtest，传入消融配置
-    # 返回聚合指标
+    # TODO: call walk_forward_backtest, passing the ablation configuration
+    # return the aggregate metrics
     return {
         "ablation": ablation_name,
         "symbol": symbol,
-        "sharpe": None,        # 待填
-        "annual_return": None, # 待填
-        "max_drawdown": None,  # 待填
-        "win_rate": None,      # 待填
+        "sharpe": None,        # to be filled
+        "annual_return": None, # to be filled
+        "max_drawdown": None,  # to be filled
+        "win_rate": None,      # to be filled
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="消融实验")
+    parser = argparse.ArgumentParser(description="Ablation study")
     parser.add_argument("--symbol", choices=["BTC", "ETH"], required=True)
     args = parser.parse_args()
 
@@ -60,7 +60,7 @@ def main():
     output_path = DATA_RESULTS / f"ablation_{args.symbol.lower()}.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
-    logger.info(f"消融实验结果已保存: {output_path}")
+    logger.info(f"Ablation results saved: {output_path}")
 
 
 if __name__ == "__main__":

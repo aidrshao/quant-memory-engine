@@ -14,6 +14,16 @@ data/processed/
 
 # Manuscript / drafts
 paper_draft.*
+*.tex
+*.pdf
+*.docx
+*.spl
+cover_letter*
+suggested_reviewers*
+references/
+*.md
+!README.md
+!data/README.md
 
 # OS
 .DS_Store

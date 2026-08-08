@@ -1,26 +1,26 @@
 """
-脚本 02: 检索 (Retrieve) 与策略回放 (Replay) 引擎
+Script 02: Retrieval (Retrieve) and strategy replay (Replay) engine
 
-Phase 2 核心算法模块，供 03_run_walk_forward.py 与消融实验复用。
+Phase 2 core algorithm module, reused by 03_run_walk_forward.py and the ablation experiments.
 
-包含两大引擎：
-  1. 检索模块 (Retrieve)
-     - 估计状态库的 11×11 协方差矩阵 Sigma_t（Tikhonov 正则化）
-     - 马氏距离 D_M、接近度得分 S_prox、时间衰减 W_rec
-     - 组合排序筛选匹配集合 H_match
+It contains two main engines:
+  1. Retrieval module (Retrieve)
+     - Estimate the 11x11 covariance matrix Sigma_t of the state database (Tikhonov regularization)
+     - Mahalanobis distance D_M, proximity score S_prox, time decay W_rec
+     - Combined ranking to select the matching set H_match
 
-  2. 策略回放引擎 (Replay)
-     - 候选策略: Long Straddle / Short Straddle / Covered Call / Bull Call Spread
-     - 30 天持有期，DVOL 作为 IV 输入，Black-Scholes 逐日盯市
-     - 显式扣除三层摩擦成本（§2.4.2）:
-         (1) 买卖价差 0.2%
-         (2) Deribit Taker 手续费 min(0.0003*S, 0.125*P)
-         (3) 保证金资金成本（按资金费率）
-     - 跨匹配状态聚合风险调整夏普比率，输出策略排行榜
+  2. Strategy replay engine (Replay)
+     - Candidate strategies: Long Straddle / Short Straddle / Covered Call / Bull Call Spread
+     - 30-day holding period, DVOL used as the IV input, Black-Scholes daily mark-to-market
+     - Explicit deduction of three layers of frictional costs (§2.4.2):
+         (1) Bid-ask spread 0.2%
+         (2) Deribit Taker fee min(0.0003*S, 0.125*P)
+         (3) Margin funding cost (based on the funding rate)
+     - Aggregate risk-adjusted Sharpe ratio across matched states and output a strategy leaderboard
 
-用法:
-  python3 scripts/02_retrieve_and_replay.py --test          # 单元测试
-  python3 scripts/02_retrieve_and_replay.py --symbol BTC    # 自检演示
+Usage:
+  python3 scripts/02_retrieve_and_replay.py --test          # unit test
+  python3 scripts/02_retrieve_and_replay.py --symbol BTC    # self-check demo
 """
 from __future__ import annotations
 
@@ -44,37 +44,37 @@ DATA_RESULTS = ROOT / "data" / "results"
 
 SYMBOL_MAP = {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}
 
-# ---- 11 维特征列（与 01_build_state_db.py 输出对齐）----
+# ---- 11-dimension feature columns (aligned with the output of 01_build_state_db.py) ----
 FEATURE_COLS = [
     "ivp", "vrp", "slope", "skew",          # S_vol
     "r_7d", "r_30d", "rsi", "hv",           # S_mkt
     "fr", "ls", "d_oi",                     # S_mic
 ]
 
-# ---- 检索参数（与论文 §3.3 对齐）----
-GAMMA = 1e-6          # Tikhonov 正则化系数
-LAMBDA = 0.15         # 时间衰减系数（半衰期约 4.6 年）
+# ---- Retrieval parameters (aligned with paper §3.3) ----
+GAMMA = 1e-6          # Tikhonov regularization coefficient
+LAMBDA = 0.15         # time-decay coefficient (half-life about 4.6 years)
 PROXIMITY_THRESHOLD = 70.0
 PROX_QUANTILE = 0.95  # D_crit = sqrt(chi2_dof(quantile))
 
-# ---- 回放参数（与论文 §3.4 对齐）----
-HOLDING = 30          # 持有期（天）
-DTE = 30              # 入场时到期天数
-R_FREE = 0.0          # 无风险利率
-SPREAD = 0.002        # 买卖价差 0.2%
-FEE_FUNC_RATE = 0.0003   # Taker 手续费: min(0.0003*S, 0.125*P)
-FEE_OPTION_CAP = 0.125   # 手续费上限为期权价格的 12.5%
+# ---- Replay parameters (aligned with paper §3.4) ----
+HOLDING = 30          # holding period (days)
+DTE = 30              # days to expiry at entry
+R_FREE = 0.0          # risk-free rate
+SPREAD = 0.002        # bid-ask spread 0.2%
+FEE_FUNC_RATE = 0.0003   # Taker fee: min(0.0003*S, 0.125*P)
+FEE_OPTION_CAP = 0.125   # fee cap is 12.5% of the option price
 
-# 策略类型
+# Strategy types
 CALL, PUT, SPOT = "CALL", "PUT", "SPOT"
 BUY, SELL = "BUY", "SELL"
 
 
 # ============================================================
-# 一、数据加载
+# 1. Data loading
 # ============================================================
 def load_market_data(currency: str) -> pd.DataFrame:
-    """加载并对齐回放所需的 spot / dvol / fr 日频序列（以 date 为索引）。"""
+    """Load and align the spot / dvol / fr daily series needed for replay (indexed by date)."""
     symbol = SYMBOL_MAP[currency]
 
     k = pd.read_csv(DATA_RAW / "binance" / f"klines_{symbol}_1d.csv")
@@ -95,7 +95,7 @@ def load_market_data(currency: str) -> pd.DataFrame:
 
 
 def load_state_db(currency: str) -> pd.DataFrame:
-    """加载 11 维归一化状态库。"""
+    """Load the 11-dimension normalized state database."""
     path = DATA_PROCESSED / f"state_db_{currency.lower()}.csv"
     df = pd.read_csv(path)
     df["date"] = pd.to_datetime(df["date"], utc=True)
@@ -103,10 +103,10 @@ def load_state_db(currency: str) -> pd.DataFrame:
 
 
 # ============================================================
-# 二、检索模块 (Retrieve)
+# 2. Retrieval module (Retrieve)
 # ============================================================
 def estimate_covariance(X: np.ndarray, gamma: float = GAMMA) -> np.ndarray:
-    """估计 11×11 协方差矩阵 Sigma，加 Tikhonov 正则化保证非奇异。
+    """Estimate the 11x11 covariance matrix Sigma, adding Tikhonov regularization to guarantee non-singularity.
 
     Sigma = (1/(N-1)) * sum (x_i - mu)(x_i - mu)^T + gamma * I_d
     """
@@ -118,7 +118,7 @@ def estimate_covariance(X: np.ndarray, gamma: float = GAMMA) -> np.ndarray:
 
 
 def mahalanobis_distance(v_now: np.ndarray, X_hist: np.ndarray, Sigma_inv: np.ndarray) -> np.ndarray:
-    """计算当前状态与所有历史状态的马氏距离向量。
+    """Compute the Mahalanobis distance vector between the current state and all historical states.
 
     D_M = sqrt((v - x)^T Sigma^{-1} (v - x))
     """
@@ -129,17 +129,17 @@ def mahalanobis_distance(v_now: np.ndarray, X_hist: np.ndarray, Sigma_inv: np.nd
 
 
 def proximity_score(D_M: np.ndarray, D_crit: float) -> np.ndarray:
-    """马氏距离 -> 接近度得分 S_prox ∈ [0, 100]。"""
+    """Mahalanobis distance -> proximity score S_prox in [0, 100]."""
     return np.clip(100.0 * (1.0 - D_M / D_crit), 0.0, 100.0)
 
 
 def time_weight(dt_years: np.ndarray, lam: float = LAMBDA) -> np.ndarray:
-    """时间衰减权重 W_rec = exp(-lambda * dt_years)。"""
+    """Time-decay weight W_rec = exp(-lambda * dt_years)."""
     return np.exp(-lam * np.asarray(dt_years, dtype=float))
 
 
 def d_crit(dims: int, quantile: float = PROX_QUANTILE) -> float:
-    """马氏空间中"相似/不相似"的卡方分位数尺度。"""
+    """Chi-square quantile scale for "similar/not-similar" in Mahalanobis space."""
     return float(np.sqrt(chi2.ppf(quantile, dims)))
 
 
@@ -151,16 +151,16 @@ def retrieve(
     threshold: float = PROXIMITY_THRESHOLD,
     gamma: float = GAMMA,
 ) -> pd.DataFrame:
-    """检索与当前状态相似的历史状态集合 H_match。
+    """Retrieve the set H_match of historical states similar to the current state.
 
     Args:
-        v_now: 当前 11 维状态向量
-        hist_df: 历史状态 DataFrame（含 date 与特征列）
-        now_date: 当前决策日期（用于时间衰减）
-        threshold: 接近度阈值 tau_prox
+        v_now: current 11-dimension state vector
+        hist_df: historical-state DataFrame (contains date and feature columns)
+        now_date: current decision date (used for time decay)
+        threshold: proximity threshold tau_prox
 
     Returns:
-        H_match DataFrame，含 date / S_prox / W_rec / combined，按 combined 降序
+        H_match DataFrame containing date / S_prox / W_rec / combined, sorted by combined descending
     """
     feature_cols = feature_cols or FEATURE_COLS
     X_hist = hist_df[feature_cols].to_numpy(dtype=float)
@@ -186,10 +186,10 @@ def retrieve(
 
 
 # ============================================================
-# 三、Black-Scholes 定价（本地自包含，避免跨包依赖）
+# 3. Black-Scholes pricing (local and self-contained, avoiding cross-package dependencies)
 # ============================================================
 def bs_price(S: float, K: float, T: float, r: float, sigma: float, opt_type: str) -> float:
-    """Black-Scholes 期权理论价。"""
+    """Black-Scholes option theoretical price."""
     T = max(float(T), 1e-6)
     sigma = min(max(float(sigma), 1e-6), 5.0)
     if S <= 0 or K <= 0:
@@ -205,21 +205,21 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float, opt_type: str
 
 
 # ============================================================
-# 四、策略回放引擎 (Replay)
+# 4. Strategy replay engine (Replay)
 # ============================================================
 @dataclass(frozen=True)
 class Leg:
-    """单条期权/现货腿。"""
+    """A single option/spot leg."""
     opt_type: str          # CALL / PUT / SPOT
     side: str              # BUY / SELL
-    K: Optional[float]     # 行权价（SPOT 时为 None）
+    K: Optional[float]     # strike price (None for SPOT)
 
 
 def build_legs(strategy: str, S0: float) -> list[Leg]:
-    """按策略规则构建期权腿（DTE=30，行权价由标的价格映射）。
+    """Build the option legs according to the strategy rules (DTE=30, strikes mapped from the underlying price).
 
-    行权价映射（§3.4.1）: 跨式取 ATM（= S0）；备兑看涨与牛市看涨价差取 10% OTM
-    （经样本外调优，10% OTM 在 BTC/ETH 上较 5% OTM 提升风险调整后夏普）。
+    Strike mapping (§3.4.1): straddles use ATM (= S0); covered calls and bull call spreads use 10% OTM
+    (tuned out-of-sample; 10% OTM improves the risk-adjusted Sharpe over 5% OTM on BTC/ETH).
     """
     if strategy == "long_straddle":
         return [Leg(CALL, BUY, S0), Leg(PUT, BUY, S0)]
@@ -228,12 +228,12 @@ def build_legs(strategy: str, S0: float) -> list[Leg]:
     if strategy == "covered_call":
         return [Leg(SPOT, BUY, None), Leg(CALL, SELL, S0 * 1.10)]  # 10% OTM
     if strategy == "bull_call_spread":
-        return [Leg(CALL, BUY, S0 * 0.90), Leg(CALL, SELL, S0 * 1.10)]  # 10% 价差
-    raise ValueError(f"未知策略: {strategy}")
+        return [Leg(CALL, BUY, S0 * 0.90), Leg(CALL, SELL, S0 * 1.10)]  # 10% spread
+    raise ValueError(f"Unknown strategy: {strategy}")
 
 
 def taker_fee(opt_premium: float, underlying: float) -> float:
-    """Deribit Taker 手续费: min(0.0003*S, 0.125*P)。"""
+    """Deribit Taker fee: min(0.0003*S, 0.125*P)."""
     return min(FEE_FUNC_RATE * underlying, FEE_OPTION_CAP * opt_premium)
 
 
@@ -247,7 +247,7 @@ def replay_strategy(
     spread: float = SPREAD,
     apply_funding: bool = True,
 ) -> dict:
-    """在 entry_idx 入场回放策略，持有 holding 天，返回盈亏明细。
+    """Replay the strategy entered at entry_idx, held for holding days, and return the P&L breakdown.
 
     Returns:
         dict: ret / pnl / daily_pnl / open_cf / close_cf / base / fees
@@ -257,29 +257,29 @@ def replay_strategy(
                 "fees": 0.0, "open_cf": 0.0, "close_cf": 0.0}
 
     S0 = market["spot"].iloc[entry_idx]
-    sig0 = market["dvol"].iloc[entry_idx] / 100.0   # DVOL 为百分数 → 小数波动率
+    sig0 = market["dvol"].iloc[entry_idx] / 100.0   # DVOL is a percentage -> fractional volatility
     T0 = holding / 365.0
 
-    # ---- 开仓（含价差与手续费）----
+    # ---- Open (including spread and fees) ----
     open_cf = 0.0
     fees = 0.0
     for leg in legs:
         if leg.opt_type == SPOT:
-            px = S0 * (1 + spread)          # 现货买入按 ask
+            px = S0 * (1 + spread)          # buy spot at ask
             open_cf -= px
         else:
             P = bs_price(S0, leg.K, T0, r, sig0, leg.opt_type)
             if leg.side == BUY:
-                px = P * (1 + spread)       # 买入按 ask
+                px = P * (1 + spread)       # buy at ask
                 fee = taker_fee(px, S0)
                 open_cf -= (px + fee)
             else:
-                px = P * (1 - spread)       # 卖出按 bid
+                px = P * (1 - spread)       # sell at bid
                 fee = taker_fee(max(px, 1e-9), S0)
                 open_cf += px - fee
             fees += fee
 
-    # ---- 逐日盯市（记录期内净值，用于回撤）----
+    # ---- Daily mark-to-market (record net value during the period, used for drawdown) ----
     daily_pnl = []
     for d in range(1, holding + 1):
         idx = entry_idx + d
@@ -295,39 +295,39 @@ def replay_strategy(
                 value += sign * bs_price(S_t, leg.K, T_rem, r, sig_t, leg.opt_type)
         daily_pnl.append(value)
 
-    # ---- 平仓（entry + holding 当天按 bid/ask 反向）----
+    # ---- Close (on entry + holding day, reverse at bid/ask) ----
     close_idx = entry_idx + holding
     lastS = market["spot"].iloc[close_idx]
     last_sig = market["dvol"].iloc[close_idx] / 100.0
     close_cf = 0.0
     for leg in legs:
         if leg.opt_type == SPOT:
-            px = lastS * (1 - spread)       # 现货卖出按 bid
+            px = lastS * (1 - spread)       # sell spot at bid
             close_cf += px
         else:
             P = bs_price(lastS, leg.K, 0.0, r, last_sig, leg.opt_type)
             if leg.side == BUY:
-                px = P * (1 - spread)       # 平买腿按 bid 卖出
+                px = P * (1 - spread)       # close buy leg by selling at bid
                 fee = taker_fee(max(px, 1e-9), lastS)
                 close_cf += px - fee
             else:
-                px = P * (1 + spread)       # 平卖腿按 ask 买回
+                px = P * (1 + spread)       # close sell leg by buying back at ask
                 fee = taker_fee(px, lastS)
                 close_cf -= px + fee
             fees += fee
 
     pnl = open_cf + close_cf
 
-    # ---- 保证金资金成本（仅空头/margin 占用，按资金费率估算机会成本）----
+    # ---- Margin funding cost (only for short/margin exposure, estimating opportunity cost by funding rate) ----
     if apply_funding and any(leg.side == SELL for leg in legs):
         avg_fr = market["fr"].iloc[entry_idx:close_idx + 1].fillna(0.0).mean()
-        # 资金成本基准 = 保证金占用（期权策略按权利金近似，现货腿按标的价格）
+        # Funding-cost basis = margin exposure (approximated by premium for option strategies, by underlying price for spot legs)
         margin = S0 if any(leg.opt_type == SPOT for leg in legs) else abs(open_cf)
         funding_cost = margin * avg_fr * holding / 365.0
         pnl -= funding_cost
 
-    # ---- 收益基准: 统一以入场标的名义本金 S0 为基准 ----
-    # 使各策略（含 Buy-Hold）可直接可比，且 30 天内收益不会出现 ±100% 级别回归。
+    # ---- Return basis: uniformly use the notional S0 of the entry underlying as the basis ----
+    # so that all strategies (including Buy-Hold) are directly comparable, and returns within 30 days do not show ±100% level regressions.
     base = max(S0, 1e-9)
     ret = pnl / base
 
@@ -336,7 +336,7 @@ def replay_strategy(
 
 
 def aggregate_returns(returns: list[float]) -> dict:
-    """跨匹配状态聚合风险调整绩效（论文 §3.4.3）。"""
+    """Aggregate risk-adjusted performance across matched states (paper §3.4.3)."""
     if not returns:
         return {"n": 0, "mean": 0.0, "std": 0.0, "sharpe": 0.0, "win_rate": 0.0}
     r = np.asarray(returns, dtype=float)
@@ -348,7 +348,7 @@ def aggregate_returns(returns: list[float]) -> dict:
     return {"n": int(len(r)), "mean": mean, "std": std, "sharpe": sharpe, "win_rate": win_rate}
 
 
-# ---- 候选策略 ----
+# ---- Candidate strategies ----
 CANDIDATE_STRATEGIES = ["long_straddle", "short_straddle", "covered_call", "bull_call_spread"]
 
 
@@ -358,7 +358,7 @@ def replay_and_rank(
     date_to_idx: dict,
     strategies: list[str] | None = None,
 ) -> pd.DataFrame:
-    """对 H_match 中每个状态回放所有候选策略，聚合夏普并输出排行榜。
+    """Replay all candidate strategies for each state in H_match, aggregate the Sharpe and output a leaderboard.
 
     Returns:
         DataFrame: strategy / sharpe / mean_return / win_rate / n_support
@@ -366,13 +366,13 @@ def replay_and_rank(
     strategies = strategies or CANDIDATE_STRATEGIES
     ranked = []
     for strat in strategies:
-        legs = build_legs(strat, market["spot"].iloc[0])  # 仅用于结构，K 在回放时按入场价重算
+        legs = build_legs(strat, market["spot"].iloc[0])  # only for structure; K is recomputed at the entry price during replay
         rets = []
         for _, row in match.iterrows():
             idx = date_to_idx.get(row["date"])
             if idx is None or idx + HOLDING >= len(market):
                 continue
-            # 行权价按入场标的价格即时重算
+            # Recompute the strike on the fly from the entry underlying price
             legs = build_legs(strat, market["spot"].iloc[idx])
             res = replay_strategy(strat, legs, market, idx)
             if not np.isnan(res["ret"]):
@@ -390,10 +390,10 @@ def replay_and_rank(
 
 
 # ============================================================
-# 五、单元测试
+# 5. Unit tests
 # ============================================================
 def _run_tests():
-    """核心函数单元测试。"""
+    """Unit tests for the core functions."""
     import math
 
     ok = True
@@ -402,31 +402,31 @@ def _run_tests():
         print(f"  [{'PASS' if cond else 'FAIL'}] {name}")
         ok = ok and cond
 
-    print("== 检索模块测试 ==")
+    print("== Retrieval module tests ==")
     rng = np.random.default_rng(42)
     X = rng.normal(0, 1, (500, 11))
     Sigma = estimate_covariance(X)
-    check("协方差矩阵 11x11", Sigma.shape == (11, 11))
+    check("covariance matrix 11x11", Sigma.shape == (11, 11))
     eig = np.linalg.eigvalsh(Sigma)
-    check("协方差正定 (min eig>0)", float(eig.min()) > 0)
+    check("covariance positive definite (min eig>0)", float(eig.min()) > 0)
     Sigma_inv = np.linalg.inv(Sigma)
     D = mahalanobis_distance(X[0], X, Sigma_inv)
-    check("自身马氏距离≈0", abs(D[0]) < 1e-6)
-    check("马氏距离非负", bool((D >= 0).all()))
+    check("own Mahalanobis distance≈0", abs(D[0]) < 1e-6)
+    check("Mahalanobis distance non-negative", bool((D >= 0).all()))
     Dc = d_crit(11)
-    # 自举：随机配对距离应显著大于自身距离
+    # Bootstrap: a randomly paired distance should be significantly larger than the own distance
     self_dist = D[0]
     other_dist = D[np.arange(1, 200)]
-    check("自距离 < 他距离", float(self_dist) < float(other_dist.mean()))
+    check("own distance < other distance", float(self_dist) < float(other_dist.mean()))
     S = proximity_score(D, Dc)
-    check("接近度 ∈ [0,100]", bool((S >= 0).all() and (S <= 100).all()))
+    check("proximity in [0,100]", bool((S >= 0).all() and (S <= 100).all()))
     dt = np.array([0.0, 1.0, 2.0])
     W = time_weight(dt, lam=0.15)
-    check("时间衰减: 近期权重大", W[0] > W[1] > W[2])
-    check("时间衰减: W(0)=1", abs(W[0] - 1.0) < 1e-9)
+    check("time decay: recent weights larger", W[0] > W[1] > W[2])
+    check("time decay: W(0)=1", abs(W[0] - 1.0) < 1e-9)
 
-    print("== 策略回放测试 ==")
-    # 构造可控市场数据: spot 恒定, dvol 恒定
+    print("== Strategy replay tests ==")
+    # Build controllable market data: constant spot, constant dvol
     n = 60
     dates = pd.date_range("2024-01-01", periods=n, freq="D", tz="UTC")
     market = pd.DataFrame({
@@ -436,57 +436,57 @@ def _run_tests():
         "fr": [0.0] * n,
     })
     legs = build_legs("long_straddle", 100.0)
-    check("long_straddle 有 2 腿 (call+put)", len(legs) == 2 and legs[0].opt_type == CALL and legs[1].opt_type == PUT)
-    # 平价跨式，标的不动，时间价值衰减 -> 多头亏损，空头盈利
+    check("long_straddle has 2 legs (call+put)", len(legs) == 2 and legs[0].opt_type == CALL and legs[1].opt_type == PUT)
+    # At-the-money straddle with unchanged underlying, time-value decay -> long loses, short profits
     res_long = replay_strategy("long_straddle", build_legs("long_straddle", 100.0), market, 0)
     res_short = replay_strategy("short_straddle", build_legs("short_straddle", 100.0), market, 0)
-    check("平价多头跨式 (标的不动) 亏损", res_long["ret"] < 0)
-    check("平价空头跨式 (标的不动) 盈利", res_short["ret"] > 0)
-    check("回放返回 30 日净值路径", len(res_long["daily_pnl"]) == 30)
-    # 手续费恒为正
-    check("手续费累计 > 0", res_long["fees"] > 0 and res_short["fees"] > 0)
-    # 回归: DVOL 百分数→小数换算，ATM 跨式权利金应在现货的 [2%, 50%] 内 (σ=50%, T=30d)
+    check("ATM long straddle (underlying unchanged) loses", res_long["ret"] < 0)
+    check("ATM short straddle (underlying unchanged) profits", res_short["ret"] > 0)
+    check("replay returns a 30-day net-value path", len(res_long["daily_pnl"]) == 30)
+    # Fees are always positive
+    check("cumulative fees > 0", res_long["fees"] > 0 and res_short["fees"] > 0)
+    # Regression: DVOL percentage->fraction conversion, ATM straddle premium should be within [2%, 50%] of spot (σ=50%, T=30d)
     prem_frac = abs(res_long["open_cf"]) / 100.0
-    check(f"ATM 跨式权利金占现货 {prem_frac:.3f} ∈ [0.02,0.50]", 0.02 <= prem_frac <= 0.50)
+    check(f"ATM straddle premium as fraction of spot {prem_frac:.3f} in [0.02,0.50]", 0.02 <= prem_frac <= 0.50)
 
     agg = aggregate_returns([0.01, 0.02, 0.03, -0.01])
-    check("聚合返回 win_rate=0.75", abs(agg["win_rate"] - 0.75) < 1e-9)
-    check("聚合返回 n=4", agg["n"] == 4)
+    check("aggregate returns win_rate=0.75", abs(agg["win_rate"] - 0.75) < 1e-9)
+    check("aggregate returns n=4", agg["n"] == 4)
 
     print()
-    print("全部通过" if ok else "存在失败项")
+    print("All passed" if ok else "There are failures")
     return ok
 
 
 # ============================================================
-# 六、自检演示
+# 6. Self-check demo
 # ============================================================
 def demo(currency: str):
-    """对某标的做一次检索 + 回放演示。"""
+    """Run a retrieval + replay demo for an asset."""
     state = load_state_db(currency)
     market = load_market_data(currency)
     date_to_idx = {row["date"]: i for i, (_, row) in enumerate(market.iterrows())}
 
-    # 取最后一个决策点前 500 天为历史
+    # Take the 500 days before the last decision point as history
     t = len(state) - HOLDING - 1
     hist = state.iloc[:t]
     v_now = state.iloc[t][FEATURE_COLS].to_numpy(dtype=float)
     now_date = state.iloc[t]["date"]
 
     match = retrieve(v_now, hist, now_date)
-    logger.info(f"[{currency}] H_match 命中 {len(match)} 个状态 (阈值 {PROXIMITY_THRESHOLD})")
-    logger.info(f"[{currency}] 最相似 Top3:\n{match.head(3).to_string()}")
+    logger.info(f"[{currency}] H_match hit {len(match)} states (threshold {PROXIMITY_THRESHOLD})")
+    logger.info(f"[{currency}] most similar Top3:\n{match.head(3).to_string()}")
 
     board = replay_and_rank(match, market, date_to_idx)
-    logger.info(f"[{currency}] 策略排行榜:\n{board.to_string()}")
+    logger.info(f"[{currency}] strategy leaderboard:\n{board.to_string()}")
     return match, board
 
 
 def main():
-    parser = argparse.ArgumentParser(description="检索与策略回放引擎")
+    parser = argparse.ArgumentParser(description="Retrieval and strategy replay engine")
     mut = parser.add_mutually_exclusive_group()
-    mut.add_argument("--test", action="store_true", help="运行单元测试")
-    mut.add_argument("--symbol", choices=["BTC", "ETH"], help="运行自检演示")
+    mut.add_argument("--test", action="store_true", help="run unit tests")
+    mut.add_argument("--symbol", choices=["BTC", "ETH"], help="run self-check demo")
     args = parser.parse_args()
 
     if args.test:

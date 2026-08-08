@@ -1,32 +1,32 @@
 """
-脚本 03: 滚动窗口样本外回测（Walk-Forward）+ 基线对比
+Script 03: Rolling-window out-of-sample backtest (Walk-Forward) + baseline comparison
 
-按论文 Algorithm 2 执行样本外协议：
-    T_warm = 500 天预热期，持有期 τ = 30 天，步长 Δt = 1 天，严禁未来函数。
+Run the out-of-sample protocol according to paper Algorithm 2:
+    T_warm = 500-day warm-up, holding period τ = 30 days, step Δt = 1 day, strictly no look-ahead.
 
-对比方法：
-  本文方法 (CBR)   : 多子空间马氏距离检索 + 策略回放排行
-  基线:
-    Cosine-KLine    : K线余弦相似度检索
-    DTW             : 动态时间规整距离检索
-    MS-GARCH        : 简化双态 GARCH(1,1) 波动率预测选策略
-    Global-Best     : 全样本最优单策略
-    Equal-Weight    : 全部候选策略等权组合
-    Buy-Hold        : 买入持有现货
+Compared methods:
+  Our method (CBR)   : multi-subspace Mahalanobis-distance retrieval + strategy replay ranking
+  Baselines:
+    Cosine-KLine    : K-line cosine-similarity retrieval
+    DTW             : dynamic time warping distance retrieval
+    MS-GARCH        : simplified two-state GARCH(1,1) volatility forecast for strategy selection
+    Global-Best     : best single strategy over the full sample
+    Equal-Weight    : equal-weighted combination of all candidate strategies
+    Buy-Hold        : buy-and-hold the spot
 
-输出:
-  data/results/sota_{symbol}.csv   方法 x 指标 表
-  data/results/sota_{symbol}.json  同上（供论文回填）
-  data/results/walk_forward_{symbol}.csv  本文方法逐日推荐明细
+Output:
+  data/results/sota_{symbol}.csv   method x metric table
+  data/results/sota_{symbol}.json  same as above (for filling into the paper)
+  data/results/walk_forward_{symbol}.csv   daily recommendations of our method
 
-回填论文:
+Fill into the paper:
   python3 scripts/03_run_walk_forward.py --fill
-  （读取 sota_*.json 填回 paper_draft.tex 的 Table 4/5 并用 xelatex 编译）
+  (reads sota_*.json, fills Table 4/5 of paper_draft.tex, and compiles with xelatex)
 
-用法:
+Usage:
   python3 scripts/03_run_walk_forward.py --symbol BTC
-  python3 scripts/03_run_walk_forward.py                # 两个标的
-  python3 scripts/03_run_walk_forward.py --fill         # 结果回填 + 编译
+  python3 scripts/03_run_walk_forward.py                # both assets
+  python3 scripts/03_run_walk_forward.py --fill         # fill results + compile
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
-# ---- 加载 02 引擎（文件名以数字开头，需 importlib）----
+# ---- Load the 02 engine (filename starts with a digit, so use importlib) ----
 _THIS = Path(__file__).resolve()
 _QME = importlib.util.spec_from_file_location("qme", _THIS.parent / "02_retrieve_and_replay.py")
 qme = importlib.util.module_from_spec(_QME)
@@ -57,12 +57,12 @@ ROOT = _THIS.parent.parent
 DATA_RESULTS = ROOT / "data" / "results"
 PAPER_TEX = ROOT / "paper_draft.tex"
 
-# ---- 实验参数（与论文 Algorithm 2 对齐）----
-WARMUP = 500          # 预热期 T_warm
-HOLDING = qme.HOLDING  # 持有期 τ = 30
-STEP = 1              # 步长 Δt
-TOP_K = 20            # Cosine/DTW 近邻数
-DTW_BAND = 8          # DTW Sakoe-Chiba 带宽
+# ---- Experiment parameters (aligned with paper Algorithm 2) ----
+WARMUP = 500          # warm-up period T_warm
+HOLDING = qme.HOLDING  # holding period τ = 30
+STEP = 1              # step Δt
+TOP_K = 20            # number of Cosine/DTW neighbors
+DTW_BAND = 8          # DTW Sakoe-Chiba band
 
 FEATURE_COLS = qme.FEATURE_COLS
 CANDIDATES = qme.CANDIDATE_STRATEGIES
@@ -71,7 +71,7 @@ METHOD_KEYS = ["cbr", "cosine_kline", "dtw", "ms_garch", "global_best", "equal_w
 
 
 # ============================================================
-# 数据与评估
+# Data and evaluation
 # ============================================================
 def load_data(currency: str):
     state = qme.load_state_db(currency)
@@ -81,9 +81,9 @@ def load_data(currency: str):
 
 
 def realize_return(spec: str, market: pd.DataFrame, m_idx: int, holding: int = HOLDING) -> float:
-    """返回某"仓位规范"在第 m_idx 日入场、持有 holding 天的收益。
+    """Return the return of a "position spec" entered at day m_idx and held for holding days.
 
-    spec 为候选策略名，或特殊键 "buy_hold" / "equal_weight"。
+    spec is a candidate strategy name, or a special key "buy_hold" / "equal_weight".
     """
     if m_idx + holding >= len(market):
         return np.nan
@@ -98,7 +98,7 @@ def realize_return(spec: str, market: pd.DataFrame, m_idx: int, holding: int = H
 
 
 def evaluate(records: list[tuple], market: pd.DataFrame, date_to_idx: dict) -> dict:
-    """由各锚点选定的仓位规范计算非重叠持有期收益与聚合指标。"""
+    """Compute non-overlapping holding-period returns and aggregate metrics from the position specs selected at each anchor."""
     blocks = []
     for date, spec in records:
         m_idx = date_to_idx.get(date)
@@ -110,12 +110,12 @@ def evaluate(records: list[tuple], market: pd.DataFrame, date_to_idx: dict) -> d
     rets = np.asarray(blocks, dtype=float)
     if len(rets) == 0:
         return {"n": 0, "sharpe": 0.0, "annual_return": 0.0, "max_drawdown": 0.0, "win_rate": 0.0}
-    # 期权策略收益以权利金为基准，可 < -100%；clip 到 [-1,+1] 以稳定指标
+    # Option-strategy returns are premium-based and can be < -100%; clip to [-1,+1] to stabilize metrics
     rets = np.clip(rets, -1.0, 1.0)
     tau = HOLDING
     mean = float(rets.mean())
     std = float(rets.std(ddof=1)) if len(rets) > 1 else 0.0
-    # 论文 §3.4.3: 持有期 τ 年化夏普
+    # Paper §3.4.3: annualized Sharpe over the holding period τ
     sharpe = mean / std * np.sqrt(365.0 / tau) if std > 0 else 0.0
     eq = np.cumprod(1 + rets)
     total = float(eq[-1])
@@ -128,7 +128,7 @@ def evaluate(records: list[tuple], market: pd.DataFrame, date_to_idx: dict) -> d
 
 
 def oos_state_indices(state_len: int) -> list[int]:
-    """样本外决策锚点（非重叠持有，每 HOLDING 天一个）。"""
+    """Out-of-sample decision anchors (non-overlapping holds, one every HOLDING days)."""
     anchors = []
     t = WARMUP
     while t <= state_len - HOLDING - 1:
@@ -138,7 +138,7 @@ def oos_state_indices(state_len: int) -> list[int]:
 
 
 # ============================================================
-# 本文方法 (CBR)
+# Our method (CBR)
 # ============================================================
 def run_cbr(state, market, date_to_idx, oos_idx) -> list[tuple]:
     records = []
@@ -150,9 +150,9 @@ def run_cbr(state, market, date_to_idx, oos_idx) -> list[tuple]:
         except np.linalg.LinAlgError:
             continue
         if match.empty:
-            # 阈值下无匹配 → 退化为按 combined 排序取 Top-K，保证每天均有推荐
+            # No match under the threshold -> fall back to taking Top-K sorted by combined, ensuring a recommendation every day
             match = qme.retrieve(v_now, hist, state.iloc[t]["date"], threshold=0.0)
-        # 稳定的 Top-K 检索（优于单近邻回退，降低样本外波动）
+        # Stable Top-K retrieval (better than a single-neighbor fallback, reduces out-of-sample variance)
         match = match.sort_values("combined", ascending=False).head(TOP_K)
         if match.empty:
             continue
@@ -163,23 +163,23 @@ def run_cbr(state, market, date_to_idx, oos_idx) -> list[tuple]:
 
 
 # ============================================================
-# 基线
+# Baselines
 # ============================================================
 def _rank_via_neighbor_dates(neighbor_dates: list, market, date_to_idx) -> str:
-    """对给定近邻日期集合回放排行，返回最优策略。"""
+    """Replay and rank over the given set of neighbor dates, returning the best strategy."""
     match = pd.DataFrame({"date": pd.to_datetime(neighbor_dates, utc=True)})
     board = qme.replay_and_rank(match, market, date_to_idx)
     return board.iloc[0]["strategy"]
 
 
 def _kline_returns(spot: np.ndarray, idx: int, win: int = 30) -> np.ndarray:
-    """返回截止 idx（含）的前 win 天对数收益序列。"""
+    """Return the log-return series of the win days up to (and including) idx."""
     seg = spot[idx - win: idx]
     return np.diff(np.log(seg)) if len(seg) > win else np.diff(np.log(seg))
 
 
 def run_retrieval_baseline(method: str, state, market, date_to_idx, oos_idx) -> list[dict]:
-    """Cosine-KLine / DTW 检索基线：K线相似度检索 + 回放选策略。"""
+    """Cosine-KLine / DTW retrieval baselines: K-line similarity retrieval + replay to select a strategy."""
     spot = market["spot"].to_numpy(dtype=float)
     hist_start = date_to_idx[state.iloc[WARMUP]["date"]]
     records = []
@@ -188,7 +188,7 @@ def run_retrieval_baseline(method: str, state, market, date_to_idx, oos_idx) -> 
         if m_now < 30:
             continue
         q = _kline_returns(spot, m_now)
-        # 历史候选：从预热期起点到 m_now-30
+        # Historical candidates: from the warm-up start to m_now-30
         cand_scores = []
         for i in range(hist_start, m_now - 30):
             h = _kline_returns(spot, i)
@@ -210,7 +210,7 @@ def run_retrieval_baseline(method: str, state, market, date_to_idx, oos_idx) -> 
 
 
 def _dtw(a: np.ndarray, b: np.ndarray, band: int = DTW_BAND) -> float:
-    """带 Sakoe-Chiba 带宽约束的 DTW 距离。"""
+    """DTW distance with a Sakoe-Chiba band constraint."""
     n, m = len(a), len(b)
     D = np.full((n + 1, m + 1), np.inf)
     D[0, 0] = 0.0
@@ -223,7 +223,7 @@ def _dtw(a: np.ndarray, b: np.ndarray, band: int = DTW_BAND) -> float:
     return float(D[n, m])
 
 
-# ---- GARCH(1,1) 简化双态 ----
+# ---- GARCH(1,1) simplified two-state ----
 def _garch11_fit(rets: np.ndarray):
     def neg_ll(params):
         w, al, be = params
@@ -240,7 +240,7 @@ def _garch11_fit(rets: np.ndarray):
 
 
 def run_ms_garch(state, market, date_to_idx, oos_idx) -> list[dict]:
-    """GARCH(1,1) 预测波动率，双态(高/低)选择策略。"""
+    """GARCH(1,1) volatility forecast; select a strategy by two states (high/low)."""
     spot = market["spot"].to_numpy(dtype=float)
     rets = np.diff(np.log(spot))
     records = []
@@ -248,27 +248,27 @@ def run_ms_garch(state, market, date_to_idx, oos_idx) -> list[dict]:
         m_now = date_to_idx[state.iloc[t]["date"]]
         if m_now < 2:
             continue
-        hist_rets = rets[:m_now]  # 仅用历史，严禁未来函数
+        hist_rets = rets[:m_now]  # use history only, strictly no look-ahead
         if len(hist_rets) < 60:
             continue
         try:
             w, al, be = _garch11_fit(hist_rets)
         except Exception:
             continue
-        # 预测下一期条件波动率
+        # Forecast the next-period conditional volatility
         sig2 = np.full_like(hist_rets, w / (1 - al - be))
         for i in range(1, len(hist_rets)):
             sig2[i] = w + al * hist_rets[i - 1] ** 2 + be * sig2[i - 1]
         fcast_var = w + al * hist_rets[-1] ** 2 + be * sig2[-1]
         fcast_sigma = np.sqrt(max(fcast_var, 1e-12))
-        thresh = np.sqrt(np.mean(sig2))  # 期内平均条件波动率
+        thresh = np.sqrt(np.mean(sig2))  # in-period mean conditional volatility
         best = "long_straddle" if fcast_sigma > thresh else "short_straddle"
         records.append((state.iloc[t]["date"], best))
     return records
 
 
 def run_global_best(state, market, date_to_idx, oos_idx) -> list[tuple]:
-    """全样本最优单策略（静态基线，始终执行）。"""
+    """Best single strategy over the full sample (static baseline, always executed)."""
     spot = market["spot"].to_numpy(dtype=float)
     best_sharpe, best_strat = -np.inf, CANDIDATES[0]
     for strat in CANDIDATES:
@@ -280,17 +280,17 @@ def run_global_best(state, market, date_to_idx, oos_idx) -> list[tuple]:
         agg = qme.aggregate_returns(rets)
         if agg["sharpe"] > best_sharpe:
             best_sharpe, best_strat = agg["sharpe"], strat
-    logger.info(f"  Global-Best 选定策略: {best_strat} (Sharpe={best_sharpe:.3f})")
+    logger.info(f"  Global-Best selected strategy: {best_strat} (Sharpe={best_sharpe:.3f})")
     return [(state.iloc[t]["date"], best_strat) for t in oos_idx]
 
 
 def run_equal_weight(state, market, date_to_idx, oos_idx) -> list[tuple]:
-    """等权执行所有候选策略（组合收益为各策略均值）。"""
+    """Execute all candidate strategies with equal weights (portfolio return is the mean of the strategies)."""
     return [(state.iloc[t]["date"], "equal_weight") for t in oos_idx]
 
 
 def run_buy_hold(state, market, date_to_idx, oos_idx) -> list[tuple]:
-    """买入持有现货：日收益即标的价格变化。"""
+    """Buy and hold the spot: the return is simply the change in the underlying price."""
     return [(state.iloc[t]["date"], "buy_hold") for t in oos_idx]
 
 
@@ -306,13 +306,13 @@ RUNNERS = {
 
 
 # ============================================================
-# 主流程
+# Main flow
 # ============================================================
 def run_symbol(currency: str) -> dict:
-    logger.info(f"========== {currency} 滚动窗口样本外回测 ==========")
+    logger.info(f"========== {currency} rolling-window out-of-sample backtest ==========")
     state, market, date_to_idx = load_data(currency)
     oos_idx = oos_state_indices(len(state))
-    logger.info(f"样本外决策点: {len(oos_idx)} 个 ({state.date.iloc[oos_idx[0]].date()} ~ {state.date.iloc[oos_idx[-1]].date()})")
+    logger.info(f"out-of-sample decision points: {len(oos_idx)} ({state.date.iloc[oos_idx[0]].date()} ~ {state.date.iloc[oos_idx[-1]].date()})")
 
     summary = {}
     records_by_method = {}
@@ -323,29 +323,29 @@ def run_symbol(currency: str) -> dict:
         metrics["method"] = method
         summary[method] = metrics
         logger.info(f"  [{method}] n={metrics['n']} Sharpe={metrics['sharpe']:.3f} "
-                    f"年化={metrics['annual_return']*100:.1f}% 回撤={metrics['max_drawdown']*100:.1f}% "
-                    f"胜率={metrics['win_rate']*100:.1f}%")
+                    f"annual={metrics['annual_return']*100:.1f}% drawdown={metrics['max_drawdown']*100:.1f}% "
+                    f"win_rate={metrics['win_rate']*100:.1f}%")
 
-    # 保存明细（本文方法）
+    # Save the details (our method)
     cbr_records = records_by_method["cbr"]
     df = pd.DataFrame(cbr_records, columns=["date", "strategy"])
     DATA_RESULTS.mkdir(parents=True, exist_ok=True)
     df.to_csv(DATA_RESULTS / f"walk_forward_{currency.lower()}.csv", index=False)
 
-    # 保存指标表
+    # Save the metrics table
     dfm = pd.DataFrame([summary[m] for m in METHOD_KEYS])
     dfm.to_csv(DATA_RESULTS / f"sota_{currency.lower()}.csv", index=False)
     with open(DATA_RESULTS / f"sota_{currency.lower()}.json", "w") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
-    logger.info(f"已保存: sota_{currency.lower()}.csv / .json")
+    logger.info(f"Saved: sota_{currency.lower()}.csv / .json")
     return summary
 
 
 # ============================================================
-# 回填论文 + 编译
+# Fill into the paper + compile
 # ============================================================
 LABEL_MAP = {
-    "cbr": "\\textbf{本文方法}",
+    "cbr": "\\textbf{Our method}",
     "cosine_kline": "Cosine-KLine",
     "dtw": "DTW",
     "ms_garch": "MS-GARCH",
@@ -365,17 +365,18 @@ def _fmt(metrics: dict) -> list[str]:
 
 
 def _table_block(tex: str, label: str) -> tuple[int, int]:
-    """返回 \label{label} 所在 table 环境的 [start, end) 区间。"""
+    """Return the [start, end) range of the table environment containing \label{label}."""
     start = tex.index(f"\\label{{{label}}}")
     end = tex.index("\\end{table}", start) + len("\\end{table}")
     return start, end
 
 
 def fill_paper() -> None:
-    """将 sota_*.json 结果填回 paper_draft.tex 的 Table 4/5。
+    """Fill the sota_*.json results back into Table 4/5 of paper_draft.tex.
 
-    按 \label 精确定位 BTC / ETH 各自 table 块，块内按行替换 4 个数值单元格，
-    保留行尾"可解释性"列。不含可解释性列的表（如消融表）不受影响。
+    Locate each BTC / ETH table block precisely by \label, replace the 4 numeric cells row by row,
+    and keep the trailing "interpretability" column. Tables without an interpretability column
+    (e.g., ablation tables) are unaffected.
     """
     btc = json.loads((DATA_RESULTS / "sota_btc.json").read_text())
     eth = json.loads((DATA_RESULTS / "sota_eth.json").read_text())
@@ -383,7 +384,7 @@ def fill_paper() -> None:
     labels = {"BTC": "tab:sota_btc", "ETH": "tab:sota_eth"}
 
     tex = PAPER_TEX.read_text()
-    # 从后往前处理，避免先改靠前块导致后续块偏移变化
+    # Process from last to first to avoid shifting later blocks when earlier blocks change
     for sym in ["ETH", "BTC"]:
         data = tables[sym]
         s, e = _table_block(tex, labels[sym])
@@ -392,22 +393,22 @@ def fill_paper() -> None:
             if method not in data:
                 continue
             vals = _fmt(data[method])
-            # 行格式: <label> & c1 & c2 & c3 & c4 & <可解释性> \\
-            # group2 = 4 个数值单元格，group3 = 末列(可解释性) + 行尾
+            # row format: <label> & c1 & c2 & c3 & c4 & <interpretability> \\
+            # group2 = the 4 numeric cells, group3 = the last column (interpretability) + end of row
             pat = re.compile(
                 r"^(" + re.escape(label) + r"\s*&)(.*?)(\s*&\s*[^&]*?\s*\\\\$)",
                 re.M)
             m = pat.search(block)
             if not m:
-                logger.warning(f"[{sym}] 未找到行: {label}")
+                logger.warning(f"[{sym}] row not found: {label}")
                 continue
             new_row = m.group(1) + " " + " & ".join(vals) + m.group(3)
             block = block[:m.start()] + new_row + block[m.end():]
         tex = tex[:s] + block + tex[e:]
     PAPER_TEX.write_text(tex, encoding="utf-8")
-    logger.info("已回填 Table 4/5。")
+    logger.info("Filled Table 4/5.")
 
-    # 编译 PDF
+    # Compile the PDF
     cwd = ROOT
     ret = subprocess.run(["xelatex", "-interaction=nonstopmode", "paper_draft.tex"],
                          cwd=cwd, capture_output=True, text=True)
@@ -415,18 +416,18 @@ def fill_paper() -> None:
     subprocess.run(["xelatex", "-interaction=nonstopmode", "paper_draft.tex"],
                    cwd=cwd, capture_output=True, text=True)
     pdf = ROOT / "paper_draft.pdf"
-    logger.info(f"PDF 编译完成: {pdf}" if pdf.exists() else "PDF 编译失败，请检查日志")
+    logger.info(f"PDF compiled: {pdf}" if pdf.exists() else "PDF compilation failed, please check the log")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="滚动窗口样本外回测 + 基线对比")
-    parser.add_argument("--symbol", choices=["BTC", "ETH"], help="只跑指定标的")
-    parser.add_argument("--fill", action="store_true", help="回填论文并编译 PDF")
+    parser = argparse.ArgumentParser(description="Rolling-window out-of-sample backtest + baseline comparison")
+    parser.add_argument("--symbol", choices=["BTC", "ETH"], help="run only the specified asset")
+    parser.add_argument("--fill", action="store_true", help="fill into the paper and compile the PDF")
     args = parser.parse_args()
 
     if args.fill:
         if not (DATA_RESULTS / "sota_btc.json").exists():
-            logger.warning("缺少 sota_btc.json，请先运行回测")
+            logger.warning("Missing sota_btc.json, please run the backtest first")
             return
         fill_paper()
         return
@@ -435,7 +436,7 @@ def main():
     all_summary = {}
     for sym in symbols:
         all_summary[sym] = run_symbol(sym)
-    logger.info("全部完成。下一步: python3 scripts/03_run_walk_forward.py --fill")
+    logger.info("All done. Next step: python3 scripts/03_run_walk_forward.py --fill")
 
 
 if __name__ == "__main__":

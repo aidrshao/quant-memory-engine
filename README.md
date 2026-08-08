@@ -1,40 +1,88 @@
-# Quant Memory Engine
+# Quant Memory Engine (QME)
 
-Case-Based Reasoning (CBR) decision-support system for **crypto options strategy selection** via multi-subspace market-state retrieval.
+A Case-Based Reasoning (CBR) decision-support system for **crypto options strategy selection** via multi-subspace market-state retrieval.
 
-This repository contains the **code and data** accompanying our manuscript submitted to *Expert Systems with Applications* (ESWA). It provides a fully reproducible pipeline for:
+This repository contains the official code and execution pipeline accompanying our manuscript submitted to *Expert Systems with Applications* (ESWA). It provides a fully reproducible end-to-end framework for:
 
-- Building an 11-dimensional multi-subspace daily market-state database (derivatives, momentum, microstructure) from public Deribit / Binance data;
-- Retrieving historically similar market states via Mahalanobis distance with decoupled temporal-decay weighting;
-- Replaying options strategies (Long/Short Straddle, Covered Call, Bull Call Spread) over a 30-day holding horizon with explicit friction costs;
-- Running rolling-window out-of-sample backtests, baseline comparisons (Cosine-KLine, DTW, MS-GARCH, Time2Vec+k-NN, E2E-DL, Global-Best, Equal-Weight, Buy-Hold), Diebold-Mariano / Hansen SPA significance tests, and ablation studies;
-- Running friction stress tests that recompute CBR and all baselines at higher bid–ask spreads (0.5%, 1.0%).
+1. **State Database Construction**: Building 11-dimensional multi-subspace daily market-state vectors (derivatives, momentum, and microstructure) from public Deribit and Binance APIs.
+2. **State Retrieval**: Retrieving historically similar market states using Mahalanobis distance with decoupled temporal-decay weighting.
+3. **Strategy Replay & Ranking**: Replaying options strategies (Long/Short Straddle, Covered Call, Bull Call Spread) over a 30-day holding horizon with explicit transaction and margin friction costs.
+4. **Out-of-Sample Evaluation**: Conducting rolling-window walk-forward backtests across 9 baselines (Cosine-KLine, DTW, MS-GARCH, Time2Vec+k-NN, E2E-DL, Global-Best, Equal-Weight, Buy-Hold) alongside Diebold–Mariano and Hansen SPA statistical tests.
+5. **Stress Testing**: Evaluating strategy resilience under elevated bid–ask spreads (0.5% and 1.0%).
 
-> **Note:** The manuscript itself is intentionally **not** included in this public repository.
+> **Note**: To comply with journal publication guidelines and prevent plagiarism indexing, the manuscript text itself (`.tex` / `.pdf`) is intentionally **not** included in this public repository.
 
-## Pipeline
+---
 
-| Script | Purpose |
-|---|---|
-| `scripts/00_download_all.py` | Download public Deribit DVOL + Binance K-line / funding-rate / metrics (OI, long-short ratio) data |
-| `scripts/01_build_state_db.py` | Build 11-dim daily state vectors (IVP, VRP, Slope, Skew, R7d, R30d, RSI, HV, FR, LS, ΔOI) |
-| `scripts/01b_plot_state.py` | Plot feature-evolution curves for data-quality checks |
-| `scripts/02_retrieve_and_replay.py` | Retrieve engine (Mahalanobis + time decay) and replay engine (BS, friction costs) |
-| `scripts/03_run_walk_forward.py` | Main walk-forward out-of-sample comparison |
-| `scripts/04_walk_forward.py` | Walk-forward helper |
-| `scripts/05_ablation.py` | Ablation study (component / subspace contributions) |
-| `scripts/06_sota_comparison.py` | Baseline / SOTA comparison |
-| `scripts/07_paper_tables.py` | Generate result tables & significance statistics |
-| `scripts/08_stress_test.py` | Friction stress test: recompute CBR & baselines at higher bid--ask spreads (0.5%, 1.0%) |
+## Quick Start (One-Click Reproducibility)
+
+To reproduce all main tables (Tables 4, 5, 6, 7, and 8) reported in the manuscript from scratch, execute the following commands sequentially from the repository root:
+
+### 1. Install Dependencies
+
+```bash
+pip install numpy pandas scipy matplotlib requests
+```
+
+### 2. Run Execution Pipeline
+
+```bash
+# Step 1: Download public raw market data (Deribit DVOL, Binance K-lines, funding rates, metrics)
+python3 scripts/00_download_all.py
+
+# Step 2: Build 11-dimensional market-state databases (requires separate runs for BTC and ETH)
+python3 scripts/01_build_state_db.py --symbol BTC
+python3 scripts/01_build_state_db.py --symbol ETH
+
+# Step 3: Generate feature-evolution plots for data-quality inspection
+python3 scripts/01b_plot_state.py
+
+# Step 4: Run full out-of-sample backtests, 9-baseline comparisons, ablation studies, and SPA/DM tests
+python3 scripts/07_paper_tables.py
+
+# Step 5: Run friction stress tests (0.5% and 1.0% bid-ask spreads)
+python3 scripts/08_stress_test.py
+```
+
+> **Note on `--symbol`**: `01_build_state_db.py` requires the `--symbol` flag and must be run **once per asset** (`BTC` and `ETH`) — these are two separate commands.
+
+---
+
+## Pipeline & Scripts Overview
+
+| Script | Purpose | Output / Artifact |
+| --- | --- | --- |
+| `scripts/00_download_all.py` | Downloads public Deribit DVOL & Binance raw data | `data/raw/` |
+| `scripts/01_build_state_db.py` | Builds 11-dim state vectors (IVP, VRP, Slope, Skew, R7d, R30d, RSI, HV, FR, LS, ΔOI) | `data/processed/state_db_*.csv` |
+| `scripts/01b_plot_state.py` | Plots time-series feature evolution for inspection | `figures/paper/` |
+| `scripts/02_retrieve_and_replay.py` | Core CBR retrieval engine & Black–Scholes replay engine (imported by `03`/`07`/`08`) | — |
+| `scripts/03_run_walk_forward.py` | Lightweight walk-forward backtest (7 baselines) | `data/results/sota_*.json` |
+| `scripts/07_paper_tables.py` | **Main Experiment**: Comprehensive 9-baseline suite + Ablation + DM/SPA tests | `data/results/sota_*.json`, `ablation_btc.json`, `significance.json` |
+| `scripts/08_stress_test.py` | **Stress Test**: Recomputes all methods under 0.5% / 1.0% spreads | `data/results/stress_test.json` |
+
+> **Note**: `scripts/04_walk_forward.py`, `05_ablation.py`, and `06_sota_comparison.py` are legacy stubs. All primary experiments, statistical testing, and table generation are consolidated into `07_paper_tables.py` and `08_stress_test.py`.
+
+---
+
+## Results Mapping
+
+Generated output files in `data/results/` map directly to the tables in the manuscript:
+
+- `data/results/sota_btc.json` → **Table 4** (BTC Out-of-Sample Performance, 9 Baselines)
+- `data/results/sota_eth.json` → **Table 5** (ETH Out-of-Sample Performance, 9 Baselines)
+- `data/results/ablation_btc.json` → **Table 6** (Ablation Study on Subspaces and 4R Modules)
+- `data/results/significance.json` → **Table 7** (Diebold–Mariano & Hansen SPA Tests)
+- `data/results/stress_test.json` → **Table 8** (Friction Stress Test under 0.5% / 1.0% Spreads)
+
+All outputs have been verified to match the paper values exactly.
+
+---
 
 ## Data
 
 - `data/results/` — aggregated out-of-sample results (Sharpe, return, max drawdown, win rate) and significance statistics for BTC / ETH.
 - Raw and processed market data are **not** committed (large files); they are regenerated by the download/build scripts from public APIs.
-
-## Reproducibility
-
-Execute the scripts in order `00 → 01 → 01b → 02 → 03 → 05 → 06 → 07 → 08` (with `04` as a helper). Dependencies: `numpy`, `pandas`, `scipy`. All data originate from public endpoints (Deribit DVOL API, Binance public data).
+- See [`data/README.md`](data/README.md) for the directory layout and feature→data-source mapping.
 
 ## License
 

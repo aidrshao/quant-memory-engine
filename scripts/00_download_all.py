@@ -1,21 +1,21 @@
 """
-脚本 00: 全量数据自动下载器
+Script 00: Full-data automatic downloader
 
-从免费公开源下载论文所需的全部可行数据，存入 data/raw/。
+Download all feasible data required by the paper from free public sources into data/raw/.
 
-数据窗口: 2023-10-05 至 2026-06-30（DVOL 公开 API 的 1000 条上限决定）
-标的: BTC, ETH
+Data window: 2023-10-05 to 2026-06-30 (determined by the 1000-record limit of the public DVOL API)
+Assets: BTC, ETH
 
-数据源:
+Data sources:
   1. Deribit DVOL          -> data/raw/deribit/dvol_{currency}.csv
-  2. Binance 现货 K线      -> data/raw/binance/klines_{symbol}_1d.csv   (data.binance.vision 镜像, 绕过区
-  3. Binance 资金费率      -> data/raw/binance/funding_rate_{symbol}.csv (data.binance.vision 镜像)
+  2. Binance spot K-lines  -> data/raw/binance/klines_{symbol}_1d.csv   (data.binance.vision mirror, bypasses regional restrictions)
+  3. Binance funding rate  -> data/raw/binance/funding_rate_{symbol}.csv (data.binance.vision mirror)
 
-后续 (需付费 Key 或已确认跳过):
-  - 历史期权链快照  -> 改用 BS 模型 + DVOL 推算 (见 backtest_engine)
-  - NetFlow / 多空比 / OI 历史 -> 暂时跳过 (消融实验 No-S_flow / No-S_mic 覆盖)
+Later steps (require a paid Key or confirmed skip):
+  - Historical option-chain snapshots  -> use BS model + DVOL instead (see backtest_engine)
+  - NetFlow / long-short ratio / OI history -> skipped for now (covered by ablation No-S_flow / No-S_mic)
 
-用法:
+Usage:
   python3 scripts/00_download_all.py
 """
 import argparse
@@ -34,18 +34,18 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).parent.parent
 RAW = ROOT / "data" / "raw"
 
-# 时间窗口: DVOL API 1000 条上限决定
+# Time window: determined by the 1000-record limit of the DVOL API
 WINDOW_START = "2023-10-05"
 WINDOW_END = "2026-06-30"
 
-# Binance vision 镜像（绕过地区封锁）
+# Binance vision mirror (bypasses regional restrictions)
 VISION_BASE = "https://data.binance.vision"
 
 SYMBOL_MAP = {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}
 
 
 def ts_ms(date_str: str, end_of_day: bool = False) -> int:
-    """日期字符串 -> 毫秒时间戳。"""
+    """Convert a date string to a millisecond timestamp."""
     fmt = "%Y-%m-%d %H:%M:%S" if end_of_day else "%Y-%m-%d"
     val = f"{date_str} 23:59:59" if end_of_day else date_str
     dt = datetime.strptime(val, fmt).replace(tzinfo=timezone.utc)
@@ -56,7 +56,7 @@ def ts_ms(date_str: str, end_of_day: bool = False) -> int:
 # 1. Deribit DVOL
 # ------------------------------------------------------------
 def fetch_deribit_dvol(currency: str) -> pd.DataFrame:
-    """抓取 Deribit 历史 DVOL 日线。"""
+    """Fetch Deribit historical DVOL daily data."""
     url = "https://www.deribit.com/api/v2/public/get_volatility_index_data"
     params = {
         "currency": currency,
@@ -64,31 +64,31 @@ def fetch_deribit_dvol(currency: str) -> pd.DataFrame:
         "end_timestamp": ts_ms(WINDOW_END, end_of_day=True),
         "resolution": "1D",
     }
-    logger.info(f"[Deribit] 抓取 {currency} DVOL...")
+    logger.info(f"[Deribit] Fetching {currency} DVOL...")
     res = requests.get(url, params=params, timeout=60).json()
     data = res.get("result", {}).get("data", [])
     if not data:
-        logger.warning(f"[Deribit] {currency} DVOL 无数据返回: {res}")
+        logger.warning(f"[Deribit] {currency} DVOL returned no data: {res}")
         return pd.DataFrame()
 
     df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close"])
     df["date"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True).dt.normalize()
     df["currency"] = currency
     df = df[["date", "currency", "close"]].rename(columns={"close": "dvol"})
-    logger.info(f"[Deribit] {currency} DVOL: {len(df)} 条 ({df.date.min().date()} ~ {df.date.max().date()})")
+    logger.info(f"[Deribit] {currency} DVOL: {len(df)} rows ({df.date.min().date()} ~ {df.date.max().date()})")
     return df
 
 
 # ------------------------------------------------------------
-# 2. Binance 现货 K 线 (vision 镜像)
+# 2. Binance spot K-lines (vision mirror)
 # ------------------------------------------------------------
 def fetch_binance_klines(symbol: str) -> pd.DataFrame:
-    """从 data.binance.vision 下载日线 K 线 (按月 zip)。"""
+    """Download daily K-lines from data.binance.vision (monthly zip)."""
     frames = []
     start = datetime.strptime(WINDOW_START, "%Y-%m-%d")
     end = datetime.strptime(WINDOW_END, "%Y-%m-%d")
 
-    # 逐月遍历，逐月修正时间戳单位（2024前毫秒 / 2025起纳秒）
+    # Iterate month by month, fixing the timestamp unit each month (ms before 2024 / ns from 2025)
     y, m = start.year, start.month
     while (y, m) <= (end.year, end.month):
         month_str = f"{y:04d}-{m:02d}"
@@ -96,7 +96,7 @@ def fetch_binance_klines(symbol: str) -> pd.DataFrame:
         try:
             r = requests.get(url, timeout=60)
             if r.status_code != 200:
-                logger.warning(f"  [Binance] {month_str} 下载失败: {r.status_code}")
+                logger.warning(f"  [Binance] {month_str} download failed: {r.status_code}")
             else:
                 with zipfile.ZipFile(io.BytesIO(r.content)) as z:
                     name = z.namelist()[0]
@@ -107,17 +107,17 @@ def fetch_binance_klines(symbol: str) -> pd.DataFrame:
                                    "close_time", "quote_vol", "count",
                                    "taker_buy_vol", "taker_buy_quote", "ignore"],
                         )
-                # 逐月判断单位：median>1e15 为微秒(2025起)，转毫秒(÷1000)
+                # Determine the unit per month: median>1e15 means microseconds (from 2025), convert to milliseconds (÷1000)
                 df["open_time"] = df["open_time"].astype("int64")
                 if df["open_time"].median() > 1e15:
                     df["open_time"] = df["open_time"] // 1_000
                 df["date"] = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.normalize()
                 frames.append(df)
-                logger.info(f"  [Binance] {symbol} {month_str}: {len(df)} 行")
+                logger.info(f"  [Binance] {symbol} {month_str}: {len(df)} rows")
         except Exception as e:
-            logger.warning(f"  [Binance] {month_str} 异常: {e}")
+            logger.warning(f"  [Binance] {month_str} error: {e}")
 
-        # 下月
+        # Next month
         m += 1
         if m > 12:
             m = 1
@@ -130,20 +130,20 @@ def fetch_binance_klines(symbol: str) -> pd.DataFrame:
     df = df[["date", "open", "high", "low", "close", "volume"]].astype(
         {"open": float, "high": float, "low": float, "close": float, "volume": float}
     )
-    # 裁剪到窗口 (date 为 tz-aware UTC, 需用 tz-aware 边界比较)
+    # Trim to the window (date is tz-aware UTC, so compare with tz-aware boundaries)
     start_ts = pd.Timestamp(WINDOW_START, tz="UTC")
     end_ts = pd.Timestamp(WINDOW_END, tz="UTC")
     df = df[(df["date"] >= start_ts) & (df["date"] <= end_ts)].drop_duplicates("date")
     df = df.sort_values("date").reset_index(drop=True)
-    logger.info(f"[Binance] {symbol} K线: {len(df)} 条 ({df.date.min().date()} ~ {df.date.max().date()})")
+    logger.info(f"[Binance] {symbol} K-lines: {len(df)} rows ({df.date.min().date()} ~ {df.date.max().date()})")
     return df
 
 
 # ------------------------------------------------------------
-# 3. Binance 资金费率 (vision 镜像)
+# 3. Binance funding rate (vision mirror)
 # ------------------------------------------------------------
 def fetch_binance_funding(symbol: str) -> pd.DataFrame:
-    """从 data.binance.vision 下载资金费率 (按月 zip)。"""
+    """Download funding rate data from data.binance.vision (monthly zip)."""
     frames = []
     start = datetime.strptime(WINDOW_START, "%Y-%m-%d")
     end = datetime.strptime(WINDOW_END, "%Y-%m-%d")
@@ -155,21 +155,21 @@ def fetch_binance_funding(symbol: str) -> pd.DataFrame:
         try:
             r = requests.get(url, timeout=60)
             if r.status_code != 200:
-                logger.warning(f"  [Binance-FR] {month_str} 下载失败: {r.status_code}")
+                logger.warning(f"  [Binance-FR] {month_str} download failed: {r.status_code}")
             else:
                 with zipfile.ZipFile(io.BytesIO(r.content)) as z:
                     name = z.namelist()[0]
                     with z.open(name) as f:
-                        df = pd.read_csv(f)  # 自带表头 calc_time, funding_interval_hours, last_funding_rate
-                # 逐月判断单位：median>1e15 为微秒(2025起)，转毫秒(÷1000)
+                        df = pd.read_csv(f)  # includes headers calc_time, funding_interval_hours, last_funding_rate
+                # Determine the unit per month: median>1e15 means microseconds (from 2025), convert to milliseconds (÷1000)
                 df["calc_time"] = df["calc_time"].astype("int64")
                 if df["calc_time"].median() > 1e15:
                     df["calc_time"] = df["calc_time"] // 1_000
                 df["date"] = pd.to_datetime(df["calc_time"], unit="ms", utc=True).dt.normalize()
                 frames.append(df)
-                logger.info(f"  [Binance-FR] {symbol} {month_str}: {len(df)} 行")
+                logger.info(f"  [Binance-FR] {symbol} {month_str}: {len(df)} rows")
         except Exception as e:
-            logger.warning(f"  [Binance-FR] {month_str} 异常: {e}")
+            logger.warning(f"  [Binance-FR] {month_str} error: {e}")
 
         m += 1
         if m > 12:
@@ -186,23 +186,23 @@ def fetch_binance_funding(symbol: str) -> pd.DataFrame:
     end_ts = pd.Timestamp(WINDOW_END, tz="UTC")
     df = df[(df["date"] >= start_ts) & (df["date"] <= end_ts)]
     df = df.sort_values("date").reset_index(drop=True)
-    logger.info(f"[Binance-FR] {symbol}: {len(df)} 条 ({df.date.min().date()} ~ {df.date.max().date()})")
+    logger.info(f"[Binance-FR] {symbol}: {len(df)} rows ({df.date.min().date()} ~ {df.date.max().date()})")
     return df
 
 
 # ------------------------------------------------------------
-# 4. Binance 未平仓量 OI + 多空比 (metrics, 每日一个文件)
-#    多线程并发下载：1000 个小 zip 文件，20 线程，约 15 秒
+# 4. Binance open interest OI + long/short ratio (metrics, one file per day)
+#    Multi-threaded concurrent download: 1000 small zip files, 20 threads, about 15 seconds
 # ------------------------------------------------------------
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-# 缓存目录：避免重复下载
+# Cache directory: avoid re-downloading
 METRICS_CACHE = ROOT / "data" / "raw" / "binance" / "metrics_cache"
 
 
 def _download_single_day_metrics(day_str: str, symbol: str) -> Optional[dict]:
-    """下载并解析单日 metrics，返回 {date, daily_oi, daily_lsr} 或 None。"""
+    """Download and parse one day of metrics, returning {date, daily_oi, daily_lsr} or None."""
     cache_file = METRICS_CACHE / f"{symbol}_{day_str}.csv"
     if cache_file.exists():
         try:
@@ -221,32 +221,32 @@ def _download_single_day_metrics(day_str: str, symbol: str) -> Optional[dict]:
         with zipfile.ZipFile(io.BytesIO(r.content)) as z:
             with z.open(z.namelist()[0]) as f:
                 df = pd.read_csv(f)
-        # 5 分钟粒度 -> 日频（取日均值）
+        # 5-minute granularity -> daily frequency (take the daily mean)
         daily_oi = df["sum_open_interest"].mean()
         daily_lsr = df["count_long_short_ratio"].mean()
-        # 写缓存
+        # Write cache
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame({"daily_oi": [daily_oi], "daily_lsr": [daily_lsr]}).to_csv(cache_file, index=False)
         return {"date": pd.Timestamp(day_str, tz="UTC"),
                 "daily_oi": daily_oi, "daily_lsr": daily_lsr}
     except Exception as e:
-        logger.warning(f"  [Binance-MET] {day_str} 异常: {e}")
+        logger.warning(f"  [Binance-MET] {day_str} error: {e}")
         return None
 
 
 def fetch_binance_metrics(symbol: str) -> pd.DataFrame:
-    """多线程并发下载每日 metrics（含 OI 与多空比）。"""
+    """Concurrently download daily metrics (including OI and long/short ratio)."""
     start = datetime.strptime(WINDOW_START, "%Y-%m-%d")
     end = datetime.strptime(WINDOW_END, "%Y-%m-%d")
 
-    # 生成日期列表
+    # Generate the list of dates
     date_list = []
     d = start
     while d <= end:
         date_list.append(d.strftime("%Y-%m-%d"))
         d += timedelta(days=1)
 
-    logger.info(f"[Binance-MET] {symbol}: 并发下载 {len(date_list)} 天 (20 线程)...")
+    logger.info(f"[Binance-MET] {symbol}: downloading {len(date_list)} days concurrently (20 threads)...")
     results = []
     with ThreadPoolExecutor(max_workers=20) as executor:
         for res in executor.map(lambda dt: _download_single_day_metrics(dt, symbol), date_list):
@@ -260,21 +260,21 @@ def fetch_binance_metrics(symbol: str) -> pd.DataFrame:
     agg = agg.reset_index()
     agg = agg.rename(columns={"daily_oi": "open_interest", "daily_lsr": "long_short_ratio"})
     agg = agg.sort_values("date").reset_index(drop=True)
-    logger.info(f"[Binance-MET] {symbol}: {len(agg)} 天 ({agg.date.min().date()} ~ {agg.date.max().date()})")
+    logger.info(f"[Binance-MET] {symbol}: {len(agg)} days ({agg.date.min().date()} ~ {agg.date.max().date()})")
     return agg
 
 
 def main():
-    parser = argparse.ArgumentParser(description="全量数据下载器")
+    parser = argparse.ArgumentParser(description="Full-data downloader")
     parser.add_argument("--currency", choices=["BTC", "ETH"], default=None,
-                        help="只下载指定币种，默认全部")
+                        help="Download only the specified currency, all by default")
     args = parser.parse_args()
 
     currencies = ["BTC", "ETH"] if args.currency is None else [args.currency]
 
     for cur in currencies:
         symbol = SYMBOL_MAP[cur]
-        logger.info(f"========== 处理 {cur} ==========")
+        logger.info(f"========== Processing {cur} ==========")
 
         # Deribit DVOL
         dvol = fetch_deribit_dvol(cur)
@@ -284,7 +284,7 @@ def main():
             dvol.to_csv(out, index=False)
             logger.info(f"saved: {out}")
 
-        # Binance K线
+        # Binance K-lines
         klines = fetch_binance_klines(symbol)
         if not klines.empty:
             out = RAW / "binance" / f"klines_{symbol}_1d.csv"
@@ -292,7 +292,7 @@ def main():
             klines.to_csv(out, index=False)
             logger.info(f"saved: {out}")
 
-        # Binance 资金费率
+        # Binance funding rate
         funding = fetch_binance_funding(symbol)
         if not funding.empty:
             out = RAW / "binance" / f"funding_rate_{symbol}.csv"
@@ -300,7 +300,7 @@ def main():
             funding.to_csv(out, index=False)
             logger.info(f"saved: {out}")
 
-        # Binance 未平仓量 OI + 多空比 (metrics)
+        # Binance open interest OI + long/short ratio (metrics)
         metrics = fetch_binance_metrics(symbol)
         if not metrics.empty:
             out = RAW / "binance" / f"metrics_{symbol}.csv"
@@ -308,7 +308,7 @@ def main():
             metrics.to_csv(out, index=False)
             logger.info(f"saved: {out}")
 
-    logger.info("全部可自动获取的数据下载完成。")
+    logger.info("All automatically fetchable data downloaded.")
 
 
 if __name__ == "__main__":
