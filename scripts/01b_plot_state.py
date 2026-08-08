@@ -14,6 +14,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import pandas as pd
 
 # Font configuration (macOS)
@@ -73,7 +74,7 @@ def plot_evolution(symbol: str) -> str:
     ncols = 4
     nrows = -(-len(features) // ncols)  # ceil division
     fig, axes = plt.subplots(nrows, ncols, figsize=(18, nrows * 3.2))
-    fig.suptitle(f"{symbol} Evolution of {len(features)} Market-State Features (2023-12 ~ 2026-06)", fontsize=16, fontweight="bold")
+    fig.suptitle(f"{symbol} Evolution of {len(features)} Market-State Features (Dec 2023 – Jun 2026)", fontsize=16, fontweight="bold")
     axes = axes.flatten()
 
     for i, col in enumerate(features):
@@ -83,7 +84,13 @@ def plot_evolution(symbol: str) -> str:
         ax.set_title(f"{FEATURE_NAMES[col]}\n[{SUBSPACE[col]}]", fontsize=10)
         ax.set_ylim(-1.2, 1.2)
         ax.grid(True, alpha=0.3)
-        ax.tick_params(labelsize=8)
+        # Control X-axis date ticks to avoid label overlap in narrow subplots:
+        # ~1 tick per half-year + 30 deg rotation + right alignment.
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+        ax.tick_params(axis="x", labelsize=8, rotation=30)
+        for _lb in ax.get_xticklabels():
+            _lb.set_ha("right")
 
     # Hide unused empty subplots
     for j in range(len(features), len(axes)):
