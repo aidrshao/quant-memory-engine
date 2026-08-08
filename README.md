@@ -7,7 +7,8 @@ This repository contains the **code and data** accompanying our manuscript submi
 - Building an 11-dimensional multi-subspace daily market-state database (derivatives, momentum, microstructure) from public Deribit / Binance data;
 - Retrieving historically similar market states via Mahalanobis distance with decoupled temporal-decay weighting;
 - Replaying options strategies (Long/Short Straddle, Covered Call, Bull Call Spread) over a 30-day holding horizon with explicit friction costs;
-- Running rolling-window out-of-sample backtests, baseline comparisons (Cosine-KLine, DTW, MS-GARCH, Time2Vec+k-NN, E2E-DL, Global-Best, Equal-Weight, Buy-Hold), Diebold-Mariano / Hansen SPA significance tests, and ablation studies.
+- Running rolling-window out-of-sample backtests, baseline comparisons (Cosine-KLine, DTW, MS-GARCH, Time2Vec+k-NN, E2E-DL, Global-Best, Equal-Weight, Buy-Hold), Diebold-Mariano / Hansen SPA significance tests, and ablation studies;
+- Running friction stress tests that recompute CBR and all baselines at higher bid–ask spreads (0.5%, 1.0%).
 
 > **Note:** The manuscript itself is intentionally **not** included in this public repository.
 
@@ -24,6 +25,7 @@ This repository contains the **code and data** accompanying our manuscript submi
 | `scripts/05_ablation.py` | Ablation study (component / subspace contributions) |
 | `scripts/06_sota_comparison.py` | Baseline / SOTA comparison |
 | `scripts/07_paper_tables.py` | Generate result tables & significance statistics |
+| `scripts/08_stress_test.py` | Friction stress test: recompute CBR & baselines at higher bid--ask spreads (0.5%, 1.0%) |
 
 ## Data
 
@@ -32,7 +34,7 @@ This repository contains the **code and data** accompanying our manuscript submi
 
 ## Reproducibility
 
-Execute the scripts in order `00 → 01 → 01b → 02 → 03 → 05 → 06 → 07` (with `04` as a helper). Dependencies: `numpy`, `pandas`, `scipy`. All data originate from public endpoints (Deribit DVOL API, Binance public data).
+Execute the scripts in order `00 → 01 → 01b → 02 → 03 → 05 → 06 → 07 → 08` (with `04` as a helper). Dependencies: `numpy`, `pandas`, `scipy`. All data originate from public endpoints (Deribit DVOL API, Binance public data).
 
 ## License
 

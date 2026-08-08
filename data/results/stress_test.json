@@ -1,0 +1,241 @@
+{
+  "baseline_spread": 0.002,
+  "stress": {
+    "0.005": {
+      "BTC": {
+        "cbr": {
+          "n": 14,
+          "sharpe": 1.129070612710191,
+          "annual_return": 0.3594988595775843,
+          "max_drawdown": 0.18328338422116697,
+          "win_rate": 0.6428571428571429,
+          "method": "cbr"
+        },
+        "cosine_kline": {
+          "n": 12,
+          "sharpe": -0.17794039271284695,
+          "annual_return": -0.11951671987598933,
+          "max_drawdown": 0.28020566472427477,
+          "win_rate": 0.5,
+          "method": "cosine_kline"
+        },
+        "dtw": {
+          "n": 12,
+          "sharpe": 1.9664364628227713,
+          "annual_return": 0.6443222906322128,
+          "max_drawdown": 0.1508525502015614,
+          "win_rate": 0.75,
+          "method": "dtw"
+        },
+        "ms_garch": {
+          "n": 14,
+          "sharpe": 0.2795364353507419,
+          "annual_return": 0.04069879979854596,
+          "max_drawdown": 0.31939375557935046,
+          "win_rate": 0.5,
+          "method": "ms_garch"
+        },
+        "global_best": {
+          "n": 14,
+          "sharpe": -0.04150799189015413,
+          "annual_return": -0.04136040871298263,
+          "max_drawdown": 0.2767105476143482,
+          "win_rate": 0.5714285714285714,
+          "method": "global_best"
+        },
+        "equal_weight": {
+          "n": 14,
+          "sharpe": -0.43125724333408366,
+          "annual_return": -0.0799701366629686,
+          "max_drawdown": 0.18823603821744472,
+          "win_rate": 0.5714285714285714,
+          "method": "equal_weight"
+        },
+        "buy_hold": {
+          "n": 14,
+          "sharpe": -0.3533331550029789,
+          "annual_return": -0.2374676189375261,
+          "max_drawdown": 0.4800207684021375,
+          "win_rate": 0.5714285714285714,
+          "method": "buy_hold"
+        }
+      },
+      "ETH": {
+        "cbr": {
+          "n": 14,
+          "sharpe": 1.040561333497373,
+          "annual_return": 0.5812239489964455,
+          "max_drawdown": 0.3326309037440177,
+          "win_rate": 0.5714285714285714,
+          "method": "cbr"
+        },
+        "cosine_kline": {
+          "n": 12,
+          "sharpe": -1.14102525513044,
+          "annual_return": -0.5602748385924363,
+          "max_drawdown": 0.6733592693359269,
+          "win_rate": 0.4166666666666667,
+          "method": "cosine_kline"
+        },
+        "dtw": {
+          "n": 12,
+          "sharpe": -1.1833686924373452,
+          "annual_return": -0.5427519399861631,
+          "max_drawdown": 0.7127208412345116,
+          "win_rate": 0.3333333333333333,
+          "method": "dtw"
+        },
+        "ms_garch": {
+          "n": 14,
+          "sharpe": -0.17811291912500243,
+          "annual_return": -0.2674349026272932,
+          "max_drawdown": 0.6415451988796497,
+          "win_rate": 0.35714285714285715,
+          "method": "ms_garch"
+        },
+        "global_best": {
+          "n": 14,
+          "sharpe": 0.39383377646528916,
+          "annual_return": 0.08074797234625142,
+          "max_drawdown": 0.43926197339074935,
+          "win_rate": 0.42857142857142855,
+          "method": "global_best"
+        },
+        "equal_weight": {
+          "n": 14,
+          "sharpe": -0.1502688424978908,
+          "annual_return": -0.04829531417849886,
+          "max_drawdown": 0.2227214954326251,
+          "win_rate": 0.6428571428571429,
+          "method": "equal_weight"
+        },
+        "buy_hold": {
+          "n": 14,
+          "sharpe": 0.4184193293073829,
+          "annual_return": 0.024448449436788255,
+          "max_drawdown": 0.6525062519688077,
+          "win_rate": 0.6428571428571429,
+          "method": "buy_hold"
+        }
+      }
+    },
+    "0.010": {
+      "BTC": {
+        "cbr": {
+          "n": 14,
+          "sharpe": 1.0731341723745198,
+          "annual_return": 0.3327217006281902,
+          "max_drawdown": 0.18468090713358798,
+          "win_rate": 0.6428571428571429,
+          "method": "cbr"
+        },
+        "cosine_kline": {
+          "n": 12,
+          "sharpe": -0.1808102866607503,
+          "annual_return": -0.11739386479440128,
+          "max_drawdown": 0.26864654609555594,
+          "win_rate": 0.5,
+          "method": "cosine_kline"
+        },
+        "dtw": {
+          "n": 12,
+          "sharpe": 1.853850941112617,
+          "annual_return": 0.5959522181950889,
+          "max_drawdown": 0.15254705218462639,
+          "win_rate": 0.75,
+          "method": "dtw"
+        },
+        "ms_garch": {
+          "n": 14,
+          "sharpe": 0.24237665533101457,
+          "annual_return": 0.02819556786391164,
+          "max_drawdown": 0.32393714254440087,
+          "win_rate": 0.5,
+          "method": "ms_garch"
+        },
+        "global_best": {
+          "n": 14,
+          "sharpe": -0.10145899220088209,
+          "annual_return": -0.055596050010576104,
+          "max_drawdown": 0.280621840057628,
+          "win_rate": 0.5714285714285714,
+          "method": "global_best"
+        },
+        "equal_weight": {
+          "n": 14,
+          "sharpe": -0.6820112350959718,
+          "annual_return": -0.11660402193234132,
+          "max_drawdown": 0.21466867905452602,
+          "win_rate": 0.5,
+          "method": "equal_weight"
+        },
+        "buy_hold": {
+          "n": 14,
+          "sharpe": -0.3533331550029789,
+          "annual_return": -0.2374676189375261,
+          "max_drawdown": 0.4800207684021375,
+          "win_rate": 0.5714285714285714,
+          "method": "buy_hold"
+        }
+      },
+      "ETH": {
+        "cbr": {
+          "n": 14,
+          "sharpe": 0.9807662202286502,
+          "annual_return": 0.5255950870728485,
+          "max_drawdown": 0.33693020353877623,
+          "win_rate": 0.5714285714285714,
+          "method": "cbr"
+        },
+        "cosine_kline": {
+          "n": 12,
+          "sharpe": -1.0525828379135143,
+          "annual_return": -0.4841951221317673,
+          "max_drawdown": 0.6047953805845323,
+          "win_rate": 0.4166666666666667,
+          "method": "cosine_kline"
+        },
+        "dtw": {
+          "n": 12,
+          "sharpe": -2.0735106784721125,
+          "annual_return": -0.7346108378520433,
+          "max_drawdown": 0.7967246960845789,
+          "win_rate": 0.25,
+          "method": "dtw"
+        },
+        "ms_garch": {
+          "n": 14,
+          "sharpe": -0.20950274223738902,
+          "annual_return": -0.2819039203081434,
+          "max_drawdown": 0.6462474685187231,
+          "win_rate": 0.35714285714285715,
+          "method": "ms_garch"
+        },
+        "global_best": {
+          "n": 14,
+          "sharpe": 0.36477216507448246,
+          "annual_return": 0.0604421563326305,
+          "max_drawdown": 0.4459925423300303,
+          "win_rate": 0.42857142857142855,
+          "method": "global_best"
+        },
+        "equal_weight": {
+          "n": 14,
+          "sharpe": -0.40023274536161113,
+          "annual_return": -0.09393068451683251,
+          "max_drawdown": 0.24714283811256077,
+          "win_rate": 0.6428571428571429,
+          "method": "equal_weight"
+        },
+        "buy_hold": {
+          "n": 14,
+          "sharpe": 0.4184193293073829,
+          "annual_return": 0.024448449436788255,
+          "max_drawdown": 0.6525062519688077,
+          "win_rate": 0.6428571428571429,
+          "method": "buy_hold"
+        }
+      }
+    }
+  }
+}
