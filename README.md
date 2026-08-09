@@ -46,7 +46,7 @@ python3 scripts/08_stress_test.py
 
 > **Note on `--symbol`**: `01_build_state_db.py` requires the `--symbol` flag and must be run **once per asset** (`BTC` and `ETH`) — these are two separate commands.
 
-> **Note on `07_paper_tables.py`**: All numerical results are always generated and persisted to `data/results/`. The script additionally backfills the manuscript tables and recompiles the PDF **only when** `paper_draft.tex` is present in the repository root; since the manuscript is intentionally excluded from this public repo, those final two steps are skipped gracefully (exit code 0) with a warning.
+> **Note on `07_paper_tables.py`**: Computes and persists all out-of-sample backtests, ablation studies, and statistical significance test results directly to `data/results/` (mapping to Tables 4–7).
 
 ---
 
