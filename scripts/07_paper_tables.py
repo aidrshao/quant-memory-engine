@@ -467,6 +467,13 @@ def _replace_cells(block: str, label: str, values: list[str], has_interp: bool) 
 
 
 def fill_tables(sota_summary, ablation, significance) -> None:
+    if not PAPER_TEX.exists():
+        logger.warning(
+            "paper_draft.tex not found (manuscript intentionally excluded from the "
+            "public repo); skipping table backfill. All numerical results were already "
+            "persisted to data/results/."
+        )
+        return
     tex = PAPER_TEX.read_text()
     replacements = []
 
@@ -538,6 +545,12 @@ def _fmt_p(p: float) -> str:
 
 
 def compile_pdf() -> None:
+    if not (ROOT / "paper_draft.tex").exists():
+        logger.warning(
+            "paper_draft.tex not found (manuscript intentionally excluded from the "
+            "public repo); skipping PDF compilation."
+        )
+        return
     cwd = ROOT
     subprocess.run(["xelatex", "-interaction=nonstopmode", "paper_draft.tex"],
                    cwd=cwd, capture_output=True, text=True)

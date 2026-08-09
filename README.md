@@ -46,6 +46,8 @@ python3 scripts/08_stress_test.py
 
 > **Note on `--symbol`**: `01_build_state_db.py` requires the `--symbol` flag and must be run **once per asset** (`BTC` and `ETH`) — these are two separate commands.
 
+> **Note on `07_paper_tables.py`**: All numerical results are always generated and persisted to `data/results/`. The script additionally backfills the manuscript tables and recompiles the PDF **only when** `paper_draft.tex` is present in the repository root; since the manuscript is intentionally excluded from this public repo, those final two steps are skipped gracefully (exit code 0) with a warning.
+
 ---
 
 ## Pipeline & Scripts Overview
@@ -74,7 +76,7 @@ Generated output files in `data/results/` map directly to the tables in the manu
 - `data/results/significance.json` → **Table 7** (Diebold–Mariano & Hansen SPA Tests)
 - `data/results/stress_test.json` → **Table 8** (Friction Stress Test under 0.5% / 1.0% Spreads)
 
-All outputs have been verified to match the paper values exactly.
+All outputs have been verified to reproduce the paper values to machine precision (differences, if any, are only floating-point rounding at the ~14th significant digit).
 
 ---
 
